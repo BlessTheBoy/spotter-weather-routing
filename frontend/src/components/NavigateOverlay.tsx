@@ -1,4 +1,4 @@
-import { ArrowUpIcon, ArrowUpLeftIcon, ArrowUpRightIcon, CheckCircle2Icon, CornerUpLeftIcon, CornerUpRightIcon, FlagIcon, PauseIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react'
+import { ArrowUpIcon, ArrowUpLeftIcon, ArrowUpRightIcon, CheckCircle2Icon, CornerUpLeftIcon, CornerUpRightIcon, FlagIcon, MapPinOffIcon, PauseIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react'
 import type { Instruction, Route } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -23,6 +23,24 @@ function distance(mi: number): string {
   return `${mi < 10 ? mi.toFixed(1) : Math.round(mi)} mi`
 }
 
+/** Road names the way drivers say them: "Interstate Highway 77 N/I-77 N" → "I-77 N". */
+export function shortRoad(text: string): string {
+  return text
+    .replace(/Interstate Highway (\d+)( [NSEW])?\/I-\d+( [NSEW])?/gi, 'I-$1$2')
+    .replace(/Interstate Highway /gi, 'I-')
+    .replace(/United States Highway /gi, 'US-')
+    .replace(/US Highway /gi, 'US-')
+    .replace(/State Highway /gi, 'SR-')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** The "then" hint: one short clause, sentence case, without TomTom's "toward …" tail. */
+function thenText(i: Instruction): string {
+  const t = shortRoad(i.text).replace(/ toward .*$/i, '')
+  return t.charAt(0).toLowerCase() + t.slice(1)
+}
+
 interface Props {
   route: Route
   nav: NavState
@@ -30,22 +48,26 @@ interface Props {
   departureMs: number
   onSpeedChange: (s: number) => void
   onTogglePlaying: () => void
+  onSimulateInstead: () => void
   onEnd: () => void
 }
 
-export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange, onTogglePlaying, onEnd }: Props) {
+export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange, onTogglePlaying, onSimulateInstead, onEnd }: Props) {
   const ahead = route.instructions.filter((s) => s.mile > nav.mile + 0.01)
   const next = ahead[0] ?? route.instructions[route.instructions.length - 1]
   const then = ahead[1]
   const Icon = ICON[next.maneuver]
   const road = [...route.instructions].reverse().find((s) => s.mile <= nav.mile && s.road)?.road
-  const hazard = states.find((s) => s.mile > nav.mile && (s.level ?? 0) >= 2)
+  // The stretch you're in now, and the worst weather still ahead.
+  const current = states.find((s, i) => nav.mile < (states[i + 1] ? (s.mile + states[i + 1].mile) / 2 : Infinity))
+  const inHazard = current && (current.level ?? 0) >= 2 ? current : null
+  const worstAhead = states.filter((s) => s.mile > nav.mile && (s.level ?? 0) >= 2).sort((a, b) => (b.level ?? 0) - (a.level ?? 0) || a.mile - b.mile)[0]
   const remainingS = Math.max(0, route.duration_s - nav.elapsedS)
   const clockMs = nav.source === 'gps' ? Date.now() : departureMs + nav.elapsedS * 1000
-  const elements = hazard
-    ? (['wind', 'rain', 'snow'] as const).filter((k) => (k === 'wind' ? Math.max(hazard.windLevel, hazard.loadLevel) : k === 'rain' ? hazard.rainLevel : hazard.snowLevel) === hazard.level)
-    : []
+  const elementsOf = (h: CheckpointState) =>
+    (['wind', 'rain', 'snow'] as const).filter((k) => (k === 'wind' ? Math.max(h.windLevel, h.loadLevel) : k === 'rain' ? h.rainLevel : h.snowLevel) === h.level).join(' and ')
   const { top, bottom } = navPadding(window.innerHeight)
+  const offRoute = nav.offRouteMi != null
 
   return (
     <>
@@ -60,27 +82,40 @@ export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange
         </svg>
       </div>
 
-      <div className="absolute top-3 right-3 left-3 z-20 flex flex-col gap-2 md:right-auto md:w-96">
-        <div className="flex items-center gap-3 rounded-2xl bg-[#0F6E56] px-4 py-3 text-white shadow-2xl">
-          <Icon className="size-10 shrink-0" strokeWidth={2.5} />
-          <div className="min-w-0">
-            <p className="text-3xl leading-none font-bold">{nav.arrived ? 'Arrived' : distance(next.mile - nav.mile)}</p>
-            <p className="truncate text-base font-medium">{nav.arrived ? route.label : next.text}</p>
+      <div className="absolute top-3 right-3 left-3 z-20 flex flex-col gap-2 md:right-auto md:w-[26rem]">
+        {offRoute ? (
+          <div className="flex items-start gap-3 rounded-2xl bg-popover/95 px-4 py-3 shadow-2xl">
+            <MapPinOffIcon className="mt-0.5 size-7 shrink-0 text-risk-moderate" />
+            <div className="min-w-0 flex-1">
+              <p className="text-lg leading-tight font-bold">{Math.round(nav.offRouteMi!).toLocaleString()} mi from the start</p>
+              <p className="text-sm text-muted-foreground">Head to the start of {route.label}. Your position and heading are live.</p>
+              <Button size="sm" variant="secondary" className="mt-2" onClick={onSimulateInstead}>
+                Simulate the drive instead
+              </Button>
+            </div>
           </div>
-        </div>
-        {then && !nav.arrived && (
-          <p className="w-fit rounded-xl bg-[#085041] px-3 py-1 text-sm text-[#E1F5EE] shadow">
-            Then {then.text.toLowerCase()} in {distance(then.mile - next.mile)}
-          </p>
+        ) : (
+          <>
+            <div className="flex items-center gap-3 rounded-2xl bg-[#0F6E56] px-4 py-3 text-white shadow-2xl">
+              <Icon className="size-9 shrink-0" strokeWidth={2.5} />
+              <div className="min-w-0">
+                <p className="text-2xl leading-none font-bold">{nav.arrived ? 'Arrived' : distance(next.mile - nav.mile)}</p>
+                <p className="line-clamp-2 text-base leading-snug font-medium">{nav.arrived ? route.label : shortRoad(next.text)}</p>
+              </div>
+            </div>
+            {then && !nav.arrived && (
+              <p className="w-fit max-w-full truncate rounded-xl bg-[#085041] px-3 py-1 text-sm text-[#E1F5EE] shadow">
+                Then {thenText(then)} in {distance(then.mile - next.mile)}
+              </p>
+            )}
+          </>
         )}
         {!nav.arrived &&
-          (hazard ? (
-            <div className="flex w-fit items-center gap-2 rounded-xl border-2 bg-popover/95 px-3 py-2 shadow" style={{ borderColor: riskColor(hazard.level) }}>
-              <TriangleAlertIcon className="size-5" style={{ color: riskColor(hazard.level) }} />
-              <span className="text-sm font-semibold">
-                {riskLabel(hazard.level)} {elements.join(' and ')} in {distance(hazard.mile - nav.mile)} · {formatTime(hazard.eta)}
-              </span>
-            </div>
+          !offRoute &&
+          (inHazard ? (
+            <Hazard color={riskColor(inHazard.level)} text={`${riskLabel(inHazard.level)} ${elementsOf(inHazard)} now`} />
+          ) : worstAhead ? (
+            <Hazard color={riskColor(worstAhead.level)} text={`${riskLabel(worstAhead.level)} ${elementsOf(worstAhead)} in ${distance(worstAhead.mile - nav.mile)} · ${formatTime(worstAhead.eta)}`} />
           ) : (
             <div className="flex w-fit items-center gap-2 rounded-xl bg-popover/95 px-3 py-2 text-sm shadow">
               <CheckCircle2Icon className="size-5 text-risk-low" />
@@ -89,38 +124,48 @@ export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange
           ))}
       </div>
 
-      <div className="absolute right-3 bottom-6 left-3 z-20 mx-auto flex max-w-3xl flex-col gap-2">
-        {road && <p className="mx-auto w-fit rounded-full bg-popover/95 px-3 py-1 text-sm font-semibold shadow">{road}</p>}
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border bg-popover/95 px-4 py-3 shadow-2xl backdrop-blur">
-          <div>
-            <p className="text-2xl leading-tight font-bold text-primary">{formatDuration(remainingS)}</p>
-            <p className="text-sm text-muted-foreground">
-              {distance(Math.max(0, route.distance_mi - nav.mile))} · ETA {formatTime(clockMs + remainingS * 1000)}
-            </p>
+      <div className="absolute right-3 bottom-4 left-3 z-20 mx-auto flex max-w-xl flex-col gap-2">
+        {road && !offRoute && <p className="mx-auto w-fit rounded-full bg-popover/95 px-3 py-1 text-sm font-semibold shadow">{shortRoad(road)}</p>}
+        <div className="flex flex-col gap-2 rounded-2xl border bg-popover/95 px-4 py-3 shadow-2xl backdrop-blur">
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-2xl leading-tight font-bold text-primary">{formatDuration(remainingS)}</p>
+              <p className="truncate text-sm text-muted-foreground">
+                {distance(Math.max(0, route.distance_mi - nav.mile))} · ETA {formatTime(clockMs + remainingS * 1000)}
+              </p>
+            </div>
+            <Button variant="destructive" className="h-11 px-5" onClick={onEnd}>
+              End
+            </Button>
           </div>
-          <div className="flex-1" />
           {nav.source === 'simulated' && (
             <div className="flex items-center gap-2">
-              <span className="rounded-md bg-risk-moderate/15 px-2 py-1 text-xs font-bold tracking-wide text-risk-moderate" title={nav.reason ?? undefined}>
+              <span className="rounded-md bg-risk-moderate/15 px-2 py-1 text-[11px] font-bold tracking-wide text-risk-moderate" title={nav.reason ?? undefined}>
                 SIMULATED
               </span>
-              <Button size="icon" variant="secondary" className="size-11" onClick={onTogglePlaying} aria-label={nav.playing ? 'Pause drive' : 'Resume drive'}>
+              <Button size="icon" variant="secondary" className="size-10 shrink-0" onClick={onTogglePlaying} aria-label={nav.playing ? 'Pause drive' : 'Resume drive'}>
                 {nav.playing ? <PauseIcon /> : <PlayIcon />}
               </Button>
-              <ToggleGroup type="single" variant="outline" value={String(nav.speed)} onValueChange={(v) => v && onSpeedChange(Number(v))} aria-label="Simulation speed">
+              <ToggleGroup type="single" variant="outline" className="ml-auto" value={String(nav.speed)} onValueChange={(v) => v && onSpeedChange(Number(v))} aria-label="Simulation speed">
                 {SPEEDS.map((s) => (
-                  <ToggleGroupItem key={s} value={String(s)} className="h-11 min-w-11 px-2">
+                  <ToggleGroupItem key={s} value={String(s)} className="h-10 min-w-10 px-1.5 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
                     {s}×
                   </ToggleGroupItem>
                 ))}
               </ToggleGroup>
             </div>
           )}
-          <Button variant="destructive" className="h-11 px-6" onClick={onEnd}>
-            End
-          </Button>
         </div>
       </div>
     </>
+  )
+}
+
+function Hazard({ color, text }: { color: string; text: string }) {
+  return (
+    <div className="flex w-fit max-w-full items-center gap-2 rounded-xl border-2 bg-popover/95 px-3 py-2 shadow" style={{ borderColor: color }}>
+      <TriangleAlertIcon className="size-5 shrink-0" style={{ color }} />
+      <span className="truncate text-sm font-semibold">{text}</span>
+    </div>
   )
 }

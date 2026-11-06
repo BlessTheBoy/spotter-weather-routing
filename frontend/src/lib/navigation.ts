@@ -47,7 +47,13 @@ export interface NavState {
   reason: string | null
   /** True when the heading comes from the phone's compass. */
   compass: boolean
+  /** Live drive, but you're not on the route yet: miles to the start. */
+  offRouteMi: number | null
 }
+
+/** How long the camera takes to fly in before a simulated drive starts moving. */
+export const INTRO_MS = 1400
+const ON_ROUTE_MI = 2
 
 /** Where the camera should be this frame. Updated every animation frame, outside React. */
 export interface CameraTarget {
@@ -71,19 +77,23 @@ export async function requestCompass(): Promise<void> {
 }
 
 /**
- * Drives Navigate. Uses live GPS when it's allowed and the device is near the
- * start; otherwise replays the route at a chosen speed, clearly labelled.
- * The camera target updates every frame through `camera`; React state (for
- * the banners) updates a few times a second.
+ * Drives Navigate.
+ * - `simulated` (demo, Preview drive, or on request): replays the route at a chosen speed, clearly labelled.
+ * - otherwise live: real GPS and compass. Off the route you see your real position and heading and the
+ *   distance to the start; `simulateInstead()` switches to a replay.
+ * The camera target updates every frame through `camera`; React state (for the banners) a few times a second.
  */
-export function useNavigation(route: Route | null, active: boolean, preview = false) {
+export function useNavigation(route: Route | null, active: boolean, simulated = false) {
   const [state, setState] = useState<NavState | null>(null)
+  const [forceSim, setForceSim] = useState(false)
   const camera = useRef<CameraTarget | null>(null)
   const speed = useRef<number>(60)
   const playing = useRef(true)
+  const preview = simulated || forceSim
 
   useEffect(() => {
     camera.current = null
+    if (!active) setForceSim(false)
     if (!route || !active) return setState(null)
     const raw = [0]
     for (let i = 1; i < route.geometry.length; i++) raw.push(raw[i - 1] + haversineMi(route.geometry[i - 1], route.geometry[i]))
@@ -100,6 +110,9 @@ export function useNavigation(route: Route | null, active: boolean, preview = fa
     let reason: string | null = 'Location unavailable'
     let compassHeading: number | null = null
     let gpsPos: LngLat | null = null
+    let gpsHeading: number | null = null
+    let offRouteMi: number | null = null
+    let startedAt = 0
 
     // Heading-up: look a little way down the road so curves turn the map early but gently.
     const routeBearing = (mile: number) => {
@@ -117,14 +130,17 @@ export function useNavigation(route: Route | null, active: boolean, preview = fa
     window.addEventListener('deviceorientation', onOrientation)
 
     const frame = (now: number) => {
+      if (!startedAt) startedAt = now
       const dt = last ? (now - last) / 1000 : 0
       last = now
-      if (source === 'simulated' && playing.current) elapsed = Math.min(route.duration_s, elapsed + dt * speed.current)
-      const mile = lookup(times, miles, elapsed)
+      // Hold the truck still while the camera flies in, so the intro never chases a moving target.
+      const introDone = now - startedAt > INTRO_MS
+      if (source === 'simulated' && playing.current && introDone) elapsed = Math.min(route.duration_s, elapsed + dt * speed.current)
+      const mile = offRouteMi != null ? 0 : lookup(times, miles, elapsed)
       const position = source === 'gps' && gpsPos ? gpsPos : positionAfter(route, elapsed)
-      // On a phone with a compass and real GPS, the map turns with the phone, like Google Maps.
+      // Live: the map turns with the phone's compass, like Google Maps; failing that, the GPS course.
       const useCompass = source === 'gps' && compassHeading != null
-      const heading = useCompass ? compassHeading! : routeBearing(mile)
+      const heading = useCompass ? compassHeading! : source === 'gps' && gpsHeading != null ? gpsHeading : routeBearing(mile)
       camera.current = { position, bearing: heading }
       if (now - lastEmit > 150) {
         lastEmit = now
@@ -139,6 +155,7 @@ export function useNavigation(route: Route | null, active: boolean, preview = fa
           arrived: mile >= route.distance_mi - 0.05,
           reason: source === 'simulated' ? reason : null,
           compass: useCompass,
+          offRouteMi: source === 'gps' ? offRouteMi : null,
         })
       }
       raf = requestAnimationFrame(frame)
@@ -151,32 +168,28 @@ export function useNavigation(route: Route | null, active: boolean, preview = fa
       watch = null
     }
 
-    if (preview) simulate('Preview of the planned departure')
+    if (preview) simulate(forceSim ? 'Simulated on request' : 'Preview of the planned departure')
     else if (!navigator.geolocation) simulate('Location unavailable')
     else {
-      navigator.geolocation.getCurrentPosition(
-        (p) => {
-          const here: LngLat = [p.coords.longitude, p.coords.latitude]
-          if (haversineMi(here, route.geometry[0]) > 2) return simulate('You’re not at the start')
-          source = 'gps'
-          watch = navigator.geolocation.watchPosition(
-            (q) => {
-              gpsPos = [q.coords.longitude, q.coords.latitude]
-              // Progress along the route: nearest vertex.
-              let best = 0
-              let bestD = Infinity
-              route.geometry.forEach((g, i) => {
-                const d = (g[0] - gpsPos![0]) ** 2 + (g[1] - gpsPos![1]) ** 2
-                if (d < bestD) ((bestD = d), (best = i))
-              })
-              elapsed = times[best]
-            },
-            () => simulate('Location lost'),
-            { enableHighAccuracy: true, maximumAge: 1000 },
-          )
+      // Live means live: real position and heading wherever you are.
+      source = 'gps'
+      watch = navigator.geolocation.watchPosition(
+        (q) => {
+          gpsPos = [q.coords.longitude, q.coords.latitude]
+          if (q.coords.heading != null && !Number.isNaN(q.coords.heading)) gpsHeading = q.coords.heading
+          // Progress along the route: nearest vertex, if you're actually on it.
+          let best = 0
+          let bestD = Infinity
+          route.geometry.forEach((g, i) => {
+            const d = (g[0] - gpsPos![0]) ** 2 + (g[1] - gpsPos![1]) ** 2
+            if (d < bestD) ((bestD = d), (best = i))
+          })
+          const onRoute = haversineMi(gpsPos, route.geometry[best]) <= ON_ROUTE_MI
+          offRouteMi = onRoute ? null : haversineMi(gpsPos, route.geometry[0])
+          if (onRoute) elapsed = times[best]
         },
         () => simulate('Location not allowed'),
-        { timeout: 6000 },
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 15_000 },
       )
     }
     raf = requestAnimationFrame(frame)
@@ -186,11 +199,13 @@ export function useNavigation(route: Route | null, active: boolean, preview = fa
       window.removeEventListener('deviceorientationabsolute', onOrientation as EventListener)
       window.removeEventListener('deviceorientation', onOrientation)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, active, preview])
 
   return {
     state,
     camera,
+    simulateInstead: () => setForceSim(true),
     setSpeed: (s: number) => (speed.current = s),
     togglePlaying: () => (playing.current = !playing.current),
   }

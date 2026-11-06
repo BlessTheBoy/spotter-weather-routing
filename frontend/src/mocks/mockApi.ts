@@ -20,23 +20,13 @@ const PLACES: Place[] = [
   { label: 'Chicago, Illinois, US', lat: 41.8781, lng: -87.6298 },
 ]
 
-const SCENARIO_KEY = 'mock-scenario'
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-export function getScenario(): ScenarioId {
-  try {
-    return (localStorage.getItem(SCENARIO_KEY) as ScenarioId) || 'rain_band'
-  } catch {
-    return 'rain_band'
-  }
-}
-
-export function setScenario(id: ScenarioId) {
-  try {
-    localStorage.setItem(SCENARIO_KEY, id)
-  } catch {
-    /* private mode: scenario just won't persist */
-  }
+// Every visit starts on Mixed, the scenario that shows every state at once.
+let scenario: ScenarioId = 'mixed'
+export const getScenario = (): ScenarioId => scenario
+export const setScenario = (id: ScenarioId) => {
+  scenario = id
 }
 
 export async function mockSearchPlaces(q: string): Promise<Place[]> {

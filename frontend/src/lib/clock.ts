@@ -11,6 +11,7 @@ export function createClock(maxHour: number) {
   let playing = false
   let raf = 0
   let last = 0
+  let stopAt = maxHour
   const listeners = new Set<() => void>()
   const emit = () => listeners.forEach((l) => l())
 
@@ -20,8 +21,8 @@ export function createClock(maxHour: number) {
     const dt = last ? (now - last) / 1000 : 0
     last = now
     hour += dt * HOURS_PER_SECOND
-    if (hour >= maxHour) {
-      hour = maxHour
+    if (hour >= stopAt) {
+      hour = stopAt
       playing = false
     }
     emit()
@@ -36,9 +37,11 @@ export function createClock(maxHour: number) {
       hour = Math.min(maxHour, Math.max(0, h))
       emit()
     },
-    play() {
+    /** Play forward, stopping at `untilHour` (e.g. the truck's arrival) or the end of the track. */
+    play(untilHour = maxHour) {
       if (playing) return
-      if (hour >= maxHour) hour = 0
+      stopAt = Math.min(maxHour, untilHour)
+      if (hour >= stopAt) hour = 0
       playing = true
       last = 0
       raf = requestAnimationFrame(tick)

@@ -9,6 +9,7 @@ import { DropdownLike } from '@/components/IntervalMenu'
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group'
 import { Spinner } from '@/components/ui/spinner'
+import { inRoutingRegion, REGION_MESSAGE } from '@/lib/location'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 export const MAX_STOPS = 3
@@ -31,8 +32,12 @@ export function loadError(load: string): string | null {
   return null
 }
 
+function outOfRegion(d: TripDraft): boolean {
+  return [d.origin, d.destination, ...d.stops].some((p) => p && !inRoutingRegion(p))
+}
+
 export function draftIsValid(d: TripDraft): boolean {
-  return !!d.origin && !!d.destination && !loadError(d.load) && d.stops.every(Boolean)
+  return !!d.origin && !!d.destination && !loadError(d.load) && d.stops.every(Boolean) && !outOfRegion(d)
 }
 
 interface Props {
@@ -127,6 +132,7 @@ export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, lo
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+      {outOfRegion(draft) && <p className="text-center text-xs text-muted-foreground">{REGION_MESSAGE} Pick places there to find routes.</p>}
       <Button type="submit" size="lg" className="h-11" disabled={!draftIsValid(draft) || loading}>
         {loading && <Spinner data-icon="inline-start" />}
         {loading ? 'Checking routes and weather…' : 'Find routes'}

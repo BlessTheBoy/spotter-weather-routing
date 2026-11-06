@@ -19,7 +19,7 @@ setWorkerUrl(workerUrl)
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/fiord'
 const TERRAIN_URL = 'https://tiles.mapterhorn.com/tilejson.json'
 const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
-const SOURCES = ['corridor', 'columns', 'routes', 'segments', 'checkpoints', 'badges', 'endpoints', 'trucks', 'you'] as const
+const SOURCES = ['corridor', 'routes', 'segments', 'checkpoints', 'badges', 'endpoints', 'trucks', 'you'] as const
 
 const RISK_STEP = [
   'step',
@@ -39,16 +39,6 @@ function fillOpacity(layer: Layer): ExpressionSpecification {
   return ['literal', 0.5] as unknown as ExpressionSpecification
 }
 
-/** 0..1 height share for 3D columns. */
-function heightShare(layer: Layer, v: number): number {
-  if (layer === 'risk') return Math.max(0, v) / 4
-  const stops = LAYERS[layer].stops
-  return Math.min(1, Math.max(0, v / stops[stops.length - 1][0]))
-}
-
-/** Cells below this stay flat in 3D, so columns only rise where weather matters. */
-const COLUMN_THRESHOLD: Record<Layer, number> = { risk: 2, wind_mph: 25, rain_in_hr: 0.1, snow_in_hr: 0.5 }
-const COLUMN_HEIGHT_M = 30_000
 
 const RISK_LINE_COLOR = ['match', ['get', 'level'], ...RISK_LEVELS.flatMap((r) => [r.level, r.color]), UNKNOWN_COLOR] as unknown as ExpressionSpecification
 
@@ -95,7 +85,6 @@ export function MapView(props: Props) {
   const readyRef = useRef<Promise<void> | null>(null)
   const values = useRef(new Float32Array(0))
   const corridorData = useRef<ReturnType<typeof corridorFeatures> | null>(null)
-  const columnKey = useRef('')
   const statesRef = useRef<CheckpointState[]>([])
   const passTimes = useRef<{ key: string; times: Float64Array } | null>(null)
   const forecastHourKey = useRef<number | null>(null)
@@ -146,7 +135,6 @@ export function MapView(props: Props) {
       }
       map.removeFeatureState({ source: 'corridor' })
       corridorData.current = corridorFeatures(plan.corridor)
-      columnKey.current = ''
       set(map, 'corridor', corridorData.current)
       set(map, 'routes', routeLines(plan))
       set(map, 'endpoints', endpoints(plan))
@@ -194,7 +182,7 @@ export function MapView(props: Props) {
   // --- forecast hour -> heatmap colours and truck positions ----------------
   function paintHour() {
     const map = mapRef.current
-    const { plan, layer, is3D, departureMs, mode, selectedRouteId, mapClock } = latest.current
+    const { plan, layer, departureMs, mode, selectedRouteId, mapClock } = latest.current
     if (!map || !plan || !map.getSource('corridor')) return
     const hour = clock.get()
     const n = plan.corridor.cells.length
@@ -215,7 +203,6 @@ export function MapView(props: Props) {
       }
     }
     for (let i = 0; i < n; i++) map.setFeatureState({ source: 'corridor', id: i }, { v: values.current[i] })
-    if (is3D) paintColumns(map, n, layer)
     if (mode === 'compare' && mapClock === 'forecast') {
       const t = hourToTime(plan.corridor, hour)
       const trucks = plan.routes
@@ -224,20 +211,6 @@ export function MapView(props: Props) {
         .map(({ r, p }) => ({ type: 'Feature' as const, properties: { route: r.id, selected: r.id === selectedRouteId }, geometry: { type: 'Point' as const, coordinates: p! } }))
       set(map, 'trucks', { type: 'FeatureCollection', features: trucks })
     } else set(map, 'trucks', EMPTY)
-  }
-
-  // 3D columns live in their own source holding only the cells above the
-  // threshold. Membership changes at most once per hour step, so setData is rare;
-  // heights and colours in between move through feature-state.
-  function paintColumns(map: MapLibre, n: number, layer: Layer) {
-    const ids: number[] = []
-    for (let i = 0; i < n; i++) if (values.current[i] >= COLUMN_THRESHOLD[layer]) ids.push(i)
-    const key = layer + ids.join(',')
-    if (key !== columnKey.current && corridorData.current) {
-      columnKey.current = key
-      set(map, 'columns', { type: 'FeatureCollection', features: ids.map((i) => corridorData.current!.features[i]) })
-    }
-    for (const i of ids) map.setFeatureState({ source: 'columns', id: i }, { v: values.current[i], h: heightShare(layer, values.current[i]) })
   }
 
   useEffect(() => {
@@ -258,8 +231,6 @@ export function MapView(props: Props) {
     whenReady((map) => {
       map.setPaintProperty('corridor-fill', 'fill-color', fillColor(layer))
       map.setPaintProperty('corridor-fill', 'fill-opacity', fillOpacity(layer))
-      map.setPaintProperty('corridor-3d', 'fill-extrusion-color', fillColor(layer))
-      columnKey.current = ''
       paintHour()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -270,7 +241,6 @@ export function MapView(props: Props) {
     whenReady((map) => {
       const heat = showHeatmap && mode === 'compare'
       map.setLayoutProperty('corridor-fill', 'visibility', heat ? 'visible' : 'none')
-      map.setLayoutProperty('corridor-3d', 'visibility', heat && is3D ? 'visible' : 'none')
       map.setLayoutProperty('route-alt', 'visibility', mode === 'compare' ? 'visible' : 'none')
       map.setLayoutProperty('route-alt-casing', 'visibility', mode === 'compare' ? 'visible' : 'none')
       // No relief while driving: at a steep tilt it shifts the road away from the puck.
@@ -278,7 +248,6 @@ export function MapView(props: Props) {
       map.setLayoutProperty('hillshade', 'visibility', terrain ? 'visible' : 'none')
       map.setTerrain(terrain ? { source: 'terrain', exaggeration: 1.4 } : null)
       if (mode === 'compare') map.easeTo({ pitch: is3D ? 58 : 0, bearing: is3D ? -15 : 0, duration: 900 })
-      columnKey.current = ''
       paintHour()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -317,6 +286,20 @@ export function MapView(props: Props) {
     return () => cancelAnimationFrame(raf)
   }, [mode, camera])
 
+  // Re-fit when the panel or sheet changes how much of the map is visible.
+  const padKey = `${props.padding.top}:${props.padding.bottom}`
+  useEffect(() => {
+    if (mode !== 'compare' || !plan) return
+    const t = setTimeout(() =>
+      whenReady((map) => {
+        const [sw, ne] = boundsOf(plan.routes)
+        map.fitBounds(new LngLatBounds(sw, ne), { padding: latest.current.padding, duration: 500 })
+      }),
+    250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [padKey])
+
   // Leaving navigation: back to the whole trip.
   useEffect(() => {
     if (mode === 'navigate' || !plan) return
@@ -337,8 +320,12 @@ export function MapView(props: Props) {
     if (!s) return
     map.setFeatureState({ source: 'checkpoints', id: hoveredCheckpoint }, { hover: true })
     // Open downwards near the top so the timeline card never hides it.
+    // Open towards the free part of the map: the timeline covers the top, the sheet the bottom.
     const y = map.project([s.lng, s.lat]).y
-    const popup = new Popup({ closeButton: false, closeOnClick: false, className: 'cp-popup', offset: 16, maxWidth: '260px', anchor: y < map.getContainer().clientHeight * 0.45 ? 'top' : 'bottom' })
+    const { top, bottom } = latest.current.padding
+    const roomAbove = y - top
+    const roomBelow = map.getContainer().clientHeight - bottom - y
+    const popup = new Popup({ closeButton: false, closeOnClick: false, className: 'cp-popup', offset: 16, maxWidth: '260px', anchor: roomAbove >= roomBelow ? 'bottom' : 'top' })
       .setLngLat([s.lng, s.lat])
       .setHTML(checkpointPopupHtml(route, s, plan.load_lb))
       .addTo(map)
@@ -372,21 +359,6 @@ function addLayers(map: MapLibre) {
     { id: 'corridor-fill', type: 'fill', source: 'corridor', paint: { 'fill-color': RISK_STEP, 'fill-opacity': fillOpacity('risk'), 'fill-outline-color': 'rgba(255,255,255,0.04)' } },
     firstLabel,
   )
-  map.addLayer(
-    {
-      id: 'corridor-3d',
-      type: 'fill-extrusion',
-      source: 'columns',
-      layout: { visibility: 'none' },
-      paint: {
-        'fill-extrusion-color': RISK_STEP,
-        'fill-extrusion-height': ['*', ['to-number', ['feature-state', 'h'], 0], COLUMN_HEIGHT_M],
-        'fill-extrusion-opacity': 0.75,
-        'fill-extrusion-vertical-gradient': true,
-      },
-    },
-    firstLabel,
-  )
   // Alternatives are quiet grey lines you can click. The selected route is hidden here and drawn by risk below.
   map.addLayer({ id: 'route-alt-casing', type: 'line', source: 'routes', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#0b1a22', 'line-width': 7, 'line-opacity': 0.6 } })
   map.addLayer({ id: 'route-alt', type: 'line', source: 'routes', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#8A9BA8', 'line-width': 4 } })
@@ -402,6 +374,8 @@ function addLayers(map: MapLibre) {
   } as const
   map.addLayer({ id: 'checkpoints-low', type: 'circle', source: 'checkpoints', minzoom: 7.5, filter: ['==', ['get', 'level'], 0], paint: dotPaint as never })
   map.addLayer({ id: 'checkpoints', type: 'circle', source: 'checkpoints', filter: ['!=', ['get', 'level'], 0], paint: dotPaint as never })
+  // Invisible, finger-sized targets over the dots (which can be 3–6 px when zoomed out).
+  map.addLayer({ id: 'checkpoints-hit', type: 'circle', source: 'checkpoints', paint: { 'circle-radius': 14, 'circle-opacity': 0 } })
   map.addLayer({
     id: 'endpoints',
     type: 'circle',
@@ -468,7 +442,7 @@ function bindInteractions(map: MapLibre, latest: { current: Props }) {
     if (id && latest.current.mode === 'compare') latest.current.onSelectRoute(id)
   })
   // Dots and the badges above them open the same popup, on hover or tap.
-  for (const layer of ['checkpoints', 'checkpoints-low', 'badges']) {
+  for (const layer of ['checkpoints-hit', 'badges']) {
     const show = (e: { features?: { properties: Record<string, unknown> }[] }) => {
       const index = e.features?.[0]?.properties?.index
       if (index == null) return

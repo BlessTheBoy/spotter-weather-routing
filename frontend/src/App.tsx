@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { fetchPlan } from '@/api/client'
 import type { Interval, Place, Plan } from '@/api/types'
 import { BottomSheet, type SheetSnap } from '@/components/BottomSheet'
@@ -10,23 +11,14 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { createClock } from '@/lib/clock'
 import type { Layer } from '@/lib/forecast'
 import { requestCompass, useNavigation } from '@/lib/navigation'
-import { routeStates } from '@/lib/plan'
+import { optionAt, routeStates } from '@/lib/plan'
+import { formatTime } from '@/lib/format'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { MapView, type MapClock, type MapMode } from '@/map/MapView'
 
 const ScenarioSwitcher = lazy(() => import('@/components/ScenarioSwitcher').then((m) => ({ default: m.ScenarioSwitcher })))
 
-const INTERVAL_KEY = 'checkpoint-interval'
 const HOUR = 3600_000
-
-function storedInterval(): Interval {
-  try {
-    const v = Number(localStorage.getItem(INTERVAL_KEY))
-    return v === 10 || v === 25 || v === 50 ? v : 10
-  } catch {
-    return 10
-  }
-}
 
 const DEFAULT_DRAFT: TripDraft = {
   origin: { label: 'Charlotte, North Carolina, US', lat: 35.2272, lng: -80.8431 },
@@ -43,7 +35,8 @@ export default function App({ demo }: { demo: boolean }) {
   const [mapClock, setMapClock] = useState<MapClock>('trip')
   const [navPreview, setNavPreview] = useState(false)
   const [draft, setDraft] = useState<TripDraft>(DEFAULT_DRAFT)
-  const [interval, setIntervalState] = useState<Interval>(storedInterval)
+  // Chosen in Plan for this visit only; Compare can't change it, so its numbers never shift underfoot.
+  const [interval, setIntervalState] = useState<Interval>(10)
   const [plan, setPlan] = useState<Plan | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,23 +51,34 @@ export default function App({ demo }: { demo: boolean }) {
   const inflight = useRef<AbortController | null>(null)
 
   const route = plan?.routes.find((r) => r.id === selectedRouteId) ?? null
-  const nav = useNavigation(route, mode === 'navigate', navPreview)
+  // Demo data and Preview drive are always simulated; Live Start uses real GPS and the compass.
+  const nav = useNavigation(route, mode === 'navigate', navPreview || demo)
   const states = useMemo(() => (plan && route ? routeStates(plan, route, interval, departureMs) : []), [plan, route, interval, departureMs])
 
   function setInterval(i: Interval) {
     setIntervalState(i)
     setHovered(null)
-    try {
-      localStorage.setItem(INTERVAL_KEY, String(i))
-    } catch {
-      /* not persisted in private mode */
-    }
   }
+
+  // The recommended route is always the one selected: whenever the pick changes, follow it.
+  const pickId = plan ? optionAt(plan, interval, departureMs).recommendation.route_id : null
+  useEffect(() => {
+    if (pickId) setSelectedRouteId(pickId)
+  }, [pickId])
 
   // A pin moved in Compare is the trip's departure from then on, including after Edit.
   function changeDeparture(ms: number) {
     setDepartureMs(ms)
     setDraft((d) => ({ ...d, departure: new Date(ms) }))
+    // The forecast knob follows the flag, so it never sits at a stale hour.
+    if (plan) clock.set((ms - Date.parse(plan.timeline.start)) / HOUR)
+  }
+
+  /** A suggested departure, applied in one tap with a way back. */
+  function applyDeparture(ms: number) {
+    const previous = departureMs
+    changeDeparture(ms)
+    toast(`Leaving ${formatTime(ms)}`, { action: { label: 'Undo', onClick: () => changeDeparture(previous) } })
   }
 
   async function submit() {
@@ -107,7 +111,7 @@ export default function App({ demo }: { demo: boolean }) {
 
   function start(kind: 'live' | 'preview') {
     // Ask for the compass inside the click: iOS only allows it from a user gesture.
-    if (kind === 'live') void requestCompass()
+    if (kind === 'live' && !demo) void requestCompass()
     clock.pause()
     setHovered(null)
     setNavPreview(kind === 'preview')
@@ -129,9 +133,8 @@ export default function App({ demo }: { demo: boolean }) {
       <ComparePanel
         plan={plan}
         interval={interval}
-        onIntervalChange={setInterval}
         departureMs={departureMs}
-        onDepartureChange={changeDeparture}
+        onApplyDeparture={applyDeparture}
         selectedRouteId={route.id}
         onSelectRoute={(id) => (setSelectedRouteId(id), setHovered(null))}
         states={states}
@@ -149,6 +152,12 @@ export default function App({ demo }: { demo: boolean }) {
         <h1 className="text-base leading-tight font-semibold">Weather-Aware Truck Routing</h1>
         <p className="text-xs text-muted-foreground">Forecast at your ETA, ranked by risk</p>
       </div>
+      <span
+        className={demo ? 'ml-auto rounded-full bg-risk-moderate/15 px-2 py-0.5 text-[10px] font-bold text-risk-moderate' : 'ml-auto rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary'}
+        title="Refresh the page to switch"
+      >
+        {demo ? 'DEMO' : 'LIVE'}
+      </span>
     </div>
   )
 
@@ -200,6 +209,7 @@ export default function App({ demo }: { demo: boolean }) {
                   onMapClockChange={setMapClock}
                   departureMs={departureMs}
                   onDepartureChange={changeDeparture}
+                  onApplyDeparture={applyDeparture}
                   tripDurationS={route.duration_s}
                   layer={layer}
                   onLayerChange={setLayer}
@@ -212,11 +222,11 @@ export default function App({ demo }: { demo: boolean }) {
             <div className="flex gap-2">
               {mode === 'compare' && (
                 <ToggleGroup type="single" size="sm" variant="outline" className="bg-popover/90" value={is3D ? '3d' : '2d'} onValueChange={(v) => v && setIs3D(v === '3d')} aria-label="Map view">
-                  <ToggleGroupItem value="2d" className="px-3">
+                  <ToggleGroupItem value="2d" className="px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
                     2D
                   </ToggleGroupItem>
-                  <ToggleGroupItem value="3d" className="px-3">
-                    3D
+                  <ToggleGroupItem value="3d" className="px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
+                    3D terrain
                   </ToggleGroupItem>
                 </ToggleGroup>
               )}
@@ -237,6 +247,7 @@ export default function App({ demo }: { demo: boolean }) {
             departureMs={departureMs}
             onSpeedChange={nav.setSpeed}
             onTogglePlaying={nav.togglePlaying}
+            onSimulateInstead={nav.simulateInstead}
             onEnd={() => setMode('compare')}
           />
         )}

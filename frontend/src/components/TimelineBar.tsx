@@ -10,7 +10,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useForecastHour, usePlaying, type Clock } from '@/lib/clock'
 import { LAYERS, type Layer } from '@/lib/forecast'
 import { formatTime } from '@/lib/format'
-import { bestWindow, departureOutlook } from '@/lib/plan'
+import { departureOutlook, saferDeparture, type SaferDeparture } from '@/lib/plan'
 import { RISK_LEVELS, riskColor } from '@/lib/risk'
 import { cn } from '@/lib/utils'
 
@@ -26,6 +26,8 @@ interface Props {
   onMapClockChange: (c: MapClock) => void
   departureMs: number
   onDepartureChange: (ms: number) => void
+  /** Apply the suggested safer departure (with Undo). */
+  onApplyDeparture: (ms: number) => void
   tripDurationS: number
   layer: Layer
   onLayerChange: (l: Layer) => void
@@ -41,7 +43,7 @@ interface Props {
  * - The track is tinted by how safe the best route would be for each departure hour.
  */
 export function TimelineBar(props: Props) {
-  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, tripDurationS, compact } = props
+  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, onApplyDeparture, tripDurationS, compact } = props
   const hour = useForecastHour(clock)
   const playing = usePlaying(clock)
   const track = useRef<HTMLDivElement>(null)
@@ -52,8 +54,7 @@ export function TimelineBar(props: Props) {
   const now = Date.parse(t.now)
   const outlook = departureOutlook(plan, interval)
   const steps = outlook.map((d) => d.departure)
-  const best = bestWindow(plan, interval)
-  const currentWorst = outlook.reduce((b, d) => (Math.abs(d.departure - departureMs) < Math.abs(b.departure - departureMs) ? d : b), outlook[0])?.worst ?? 0
+  const safer = saferDeparture(plan, interval, departureMs)
   const playMs = start + hour * HOUR
   const tripEnd = departureMs + tripDurationS * 1000
   const stepW = span ? (HOUR / span) * 100 : 0
@@ -84,13 +85,13 @@ export function TimelineBar(props: Props) {
     onMapClockChange('forecast')
     // Replay the trip from departure unless the knob is already inside it.
     if (mapClock !== 'forecast' || playMs < departureMs || playMs >= Math.min(tripEnd, start + span) - HOUR) clock.set((departureMs - start) / HOUR)
-    clock.play()
+    // Stop when the truck arrives: the rest of the 48 h isn't part of this trip.
+    clock.play((tripEnd - start) / HOUR)
   }
 
   const tickStep = (compact ? 24 : 12) * HOUR
   const ticks: number[] = []
   for (let ms = Math.ceil(start / tickStep) * tickStep; ms <= start + span; ms += tickStep) if (Math.abs(ms - now) > span * (compact ? 0.16 : 0.08)) ticks.push(ms)
-  const saferAt = best && currentWorst > best.worst ? best.from : null
 
   return (
     <div className={cn('flex flex-col gap-1 rounded-2xl border bg-popover/95 shadow-xl backdrop-blur', compact ? 'px-3 pt-2 pb-1' : 'px-4 pt-3 pb-2')}>
@@ -108,21 +109,28 @@ export function TimelineBar(props: Props) {
             My trip
           </Button>
         )}
-        {saferAt && !compact && <SaferButton at={saferAt} onClick={() => setLeave(saferAt)} />}
+        {safer && !compact && <SaferButton safer={safer} departureMs={departureMs} onClick={() => onApplyDeparture(safer.at)} />}
         <LayersButton {...props} />
       </div>
-      {saferAt && compact && <SaferButton at={saferAt} onClick={() => setLeave(saferAt)} className="self-start" />}
+      {safer && compact && <SaferButton safer={safer} departureMs={departureMs} onClick={() => onApplyDeparture(safer.at)} className="self-start" />}
 
       {/* Track: tap or drag anywhere to move the forecast knob. The flag above it is the departure. */}
       <div className="relative mt-6 mb-1 touch-none select-none">
         <div ref={track} className="relative h-6 cursor-pointer" onPointerDown={(e) => drag(e, setForecast)}>
           <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-full bg-muted">
+            {/* Tint: how bad the best route would be if you left at that hour. */}
             {outlook.map((d) => (
-              <div key={d.departure} className="absolute inset-y-0" style={{ left: pct(d.departure), width: `${stepW}%`, background: riskColor(d.worst), opacity: 0.35 }} />
+              <div
+                key={d.departure}
+                className="absolute inset-y-0"
+                title={`Leave ${formatTime(d.departure)}: best route's worst is ${RISK_LEVELS[d.worst].label}`}
+                style={{ left: pct(d.departure), width: `${stepW}%`, background: riskColor(d.worst), opacity: 0.75 }}
+              />
             ))}
             {now > start && <div className="absolute inset-y-0 left-0 bg-background/70" style={{ width: pct(now) }} />}
-            <div className="absolute inset-y-0 bg-primary/70" style={{ left: pct(departureMs), width: `calc(${pct(tripEnd)} - ${pct(departureMs)})` }} />
           </div>
+          {/* The trip itself sits under the tint, so it never hides the departure colours. */}
+          <div className="absolute top-[calc(50%+6px)] h-1 rounded-full bg-primary" style={{ left: pct(departureMs), width: `calc(${pct(tripEnd)} - ${pct(departureMs)})` }} />
           <div
             role="slider"
             tabIndex={0}
@@ -180,11 +188,12 @@ export function TimelineBar(props: Props) {
   )
 }
 
-function SaferButton({ at, onClick, className }: { at: number; onClick: () => void; className?: string }) {
+function SaferButton({ safer, departureMs, onClick, className }: { safer: SaferDeparture; departureMs: number; onClick: () => void; className?: string }) {
+  const waitH = Math.round((safer.at - departureMs) / HOUR)
   return (
-    <Button size="sm" variant="outline" onClick={onClick} className={className}>
+    <Button size="sm" variant="outline" onClick={onClick} className={className} title={`Leaving then avoids ${Math.round(safer.badNow)} mi of Severe or No Travel`}>
       <CalendarCheckIcon data-icon="inline-start" className="text-risk-low" />
-      Safer: leave {formatTime(at)}
+      Leave {formatTime(safer.at)}: no Severe (+{waitH} h)
     </Button>
   )
 }

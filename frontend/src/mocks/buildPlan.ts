@@ -103,7 +103,8 @@ export function buildPlan(fx: Fixture, req: PlanRequest, scenario: ScenarioId): 
   const timeline = timelineFor(Date.parse(req.departure), longest)
   const trackStart = Date.parse(timeline.start)
   const seriesHours = TRACK_HOURS + Math.ceil(longest / 3600) + 2
-  const field = scenario === 'live' ? recordedField(fx, trackStart) : makeField(scenario, bboxOf(fx))
+  const departureHour = (Date.parse(timeline.departure) - trackStart) / HOUR
+  const field = scenario === 'live' ? recordedField(fx, trackStart) : makeField(scenario, bboxOf(fx), fx.routes, departureHour)
 
   const routes: Route[] = fx.routes.map((r) => {
     const checkpoints = {} as Record<Interval, Checkpoint[]>

@@ -1,6 +1,6 @@
-import { ArrowLeftIcon, ChevronDownIcon, NavigationIcon, PlayCircleIcon, StarIcon, TriangleAlertIcon, ZapIcon } from 'lucide-react'
+import { ArrowLeftIcon, ChevronDownIcon, NavigationIcon, PlayCircleIcon, StarIcon, TriangleAlertIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { INTERVALS, type Criterion, type Interval, type Plan, type Route, type RouteSummary } from '@/api/types'
+import type { Criterion, Interval, Plan, Route, RouteSummary } from '@/api/types'
 import { RiskStrip } from '@/components/RiskStrip'
 import { StartDialog } from '@/components/StartDialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -8,7 +8,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { formatDuration, formatMiles, formatTime } from '@/lib/format'
 import { isNow, optionAt, type CheckpointState } from '@/lib/plan'
 import { CRITERIA_LABELS, RISK_LEVELS, riskColor, riskLabel } from '@/lib/risk'
@@ -16,10 +15,11 @@ import { cn } from '@/lib/utils'
 
 interface Props {
   plan: Plan
+  /** Chosen in Plan; fixed here so the numbers can't shift while comparing. */
   interval: Interval
-  onIntervalChange: (i: Interval) => void
   departureMs: number
-  onDepartureChange: (ms: number) => void
+  /** Apply a suggested departure (with an Undo). */
+  onApplyDeparture: (ms: number) => void
   selectedRouteId: string
   onSelectRoute: (id: string) => void
   /** Checkpoint states of the selected route under the current clock. */
@@ -45,21 +45,26 @@ function versusPick(view: Route, viewS: RouteSummary, pick: Route, pickS: RouteS
 }
 
 export function ComparePanel(props: Props) {
-  const { plan, interval, onIntervalChange, departureMs, onDepartureChange, selectedRouteId, onSelectRoute, states, hoveredCheckpoint, onHoverCheckpoint, onEdit, onStart } = props
+  const { plan, interval, departureMs, onApplyDeparture, selectedRouteId, onSelectRoute, states, hoveredCheckpoint, onHoverCheckpoint, onEdit, onStart } = props
   const [rankOpen, setRankOpen] = useState(false)
   const [confirm, setConfirm] = useState(false)
   const option = optionAt(plan, interval, departureMs)
   const rec = option.recommendation
-  const routes = useMemo(() => [...plan.routes].sort((a, b) => a.id.localeCompare(b.id)), [plan.routes])
+  // The recommended route always leads; the rest follow in ranking order.
+  const routes = useMemo(() => rec.ranking.map((id) => plan.routes.find((r) => r.id === id)!), [plan.routes, rec.ranking])
   const fastest = routes.reduce((a, b) => (b.duration_s < a.duration_s ? b : a))
   const pick = plan.routes.find((r) => r.id === rec.route_id)!
   const route = plan.routes.find((r) => r.id === selectedRouteId)!
   const summary = option.summaries[route.id]
   const live = isNow(departureMs)
   const longRange = departureMs > Date.parse(plan.timeline.long_range_after)
+  const severe = summary.miles_by_level.severe
+  const noTravel = summary.miles_by_level.no_travel
+  const hazard = noTravel > 0 ? `${formatMiles(noTravel)} No Travel ahead` : severe > 0 ? `${formatMiles(severe)} Severe ahead` : null
 
   function start() {
-    if (summary.miles_by_level.no_travel > 0) return setConfirm(true)
+    // Severe and No Travel ask first, with the safer options; anything milder starts straight away.
+    if (severe + noTravel > 0) return setConfirm(true)
     onStart(live ? 'live' : 'preview')
   }
 
@@ -78,13 +83,6 @@ export function ComparePanel(props: Props) {
             {plan.load_lb.toLocaleString()} lb · leave {formatTime(departureMs)}
           </p>
         </div>
-        <ToggleGroup type="single" size="sm" variant="outline" value={String(interval)} onValueChange={(v) => v && onIntervalChange(Number(v) as Interval)} aria-label="Checkpoint every">
-          {INTERVALS.map((v) => (
-            <ToggleGroupItem key={v} value={String(v)} className="px-2 text-xs" aria-label={`Every ${v} miles`}>
-              {v} mi
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
       </div>
 
       <div className="flex flex-col gap-2" role="radiogroup" aria-label="Route options">
@@ -92,6 +90,7 @@ export function ComparePanel(props: Props) {
           const s = option.summaries[r.id]
           const selected = r.id === selectedRouteId
           const extra = r.duration_s - fastest.duration_s
+          const isPick = r.id === rec.route_id
           return (
             <div
               key={r.id}
@@ -108,17 +107,15 @@ export function ComparePanel(props: Props) {
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-semibold">{routeName(r)}</span>
-                    {r.id === rec.route_id && <StarIcon className="size-3.5 shrink-0 fill-primary text-primary" aria-label="Recommended" />}
-                    {r.id === fastest.id && (
-                      <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
-                        <ZapIcon data-icon="inline-start" />
-                        Fastest
+                  </span>
+                  <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+                    {isPick && (
+                      <Badge className="h-4 shrink-0 px-1.5 text-[10px]">
+                        <StarIcon data-icon="inline-start" className="fill-current" />
+                        Recommended
                       </Badge>
                     )}
-                  </span>
-                  <span className="block truncate text-xs text-muted-foreground">
                     {formatMiles(r.distance_mi)} · worst {riskLabel(s.max_level)}
-                    {extra > 60 && ` · +${formatDuration(extra)} vs fastest`}
                   </span>
                 </span>
                 <span className="text-sm font-semibold tabular-nums" style={{ color: s.max_level >= 3 ? riskColor(s.max_level) : undefined }}>
@@ -129,7 +126,7 @@ export function ComparePanel(props: Props) {
               {selected && (
                 <div className="flex flex-col gap-2 px-3 pb-3">
                   <p className="text-sm">
-                    {r.id === rec.route_id ? (
+                    {isPick ? (
                       <>
                         <span className="font-semibold text-primary">Recommended. </span>
                         {rec.reason}
@@ -150,7 +147,7 @@ export function ComparePanel(props: Props) {
                           {formatMiles(s.miles_by_level[l.key])} {l.label}
                         </span>
                       ))}
-                    <span className="text-muted-foreground">measured every {interval} mi</span>
+                    <span className="text-muted-foreground">checkpoints every {interval} mi</span>
                   </div>
                 </div>
               )}
@@ -178,11 +175,19 @@ export function ComparePanel(props: Props) {
 
       <div className="flex-1" />
       <div className="sticky bottom-0 -mx-1 bg-background/95 px-1 pt-2 pb-1 backdrop-blur">
-        <Button size="lg" className="h-11 w-full" onClick={start} variant={live ? 'default' : 'secondary'}>
+        <Button
+          size="lg"
+          className={cn('h-11 w-full', hazard && live && 'bg-risk-high text-black hover:bg-risk-high/90')}
+          onClick={start}
+          variant={live ? 'default' : 'secondary'}
+        >
           {live ? <NavigationIcon data-icon="inline-start" /> : <PlayCircleIcon data-icon="inline-start" />}
-          {live ? 'Start now' : `Preview drive · leave ${formatTime(departureMs)}`}
+          <span className="truncate">
+            {live ? 'Start now' : 'Preview drive'}
+            {hazard && ` · ${hazard}`}
+          </span>
         </Button>
-        {!live && <p className="mt-1.5 text-center text-xs text-muted-foreground">Live guidance starts when you move the Leave pin to now.</p>}
+        {!live && <p className="mt-1.5 text-center text-xs text-muted-foreground">Leaving {formatTime(departureMs)}. Move the Leave flag to now for live guidance.</p>}
       </div>
 
       <StartDialog
@@ -193,7 +198,7 @@ export function ComparePanel(props: Props) {
         route={route}
         departureMs={departureMs}
         onSwitchRoute={(id) => (onSelectRoute(id), setConfirm(false))}
-        onLeaveLater={(ms) => (onDepartureChange(ms), setConfirm(false))}
+        onLeaveLater={(ms) => (onApplyDeparture(ms), setConfirm(false))}
         onStartAnyway={() => (setConfirm(false), onStart(live ? 'live' : 'preview'))}
       />
     </div>
@@ -210,10 +215,10 @@ function Ranking({ routes, summaries, deciding }: { routes: Route[]; summaries: 
   ]
   return (
     <>
-      <Table className="text-xs">
+      <Table className="table-fixed text-xs">
         <TableHeader>
           <TableRow>
-            <TableHead className="h-8">Compared in order</TableHead>
+            <TableHead className="h-8 w-[45%]">In order</TableHead>
             {routes.map((r) => (
               <TableHead key={r.id} className="h-8 text-right">
                 {r.id}
@@ -227,7 +232,7 @@ function Ranking({ routes, summaries, deciding }: { routes: Route[]; summaries: 
             const isDeciding = row.key === deciding
             return (
               <TableRow key={row.key} className={cn(isDeciding && 'bg-primary/10')}>
-                <TableCell className={cn('py-1.5', isDeciding ? 'font-semibold text-primary' : 'text-muted-foreground')}>
+                <TableCell className={cn('py-1.5 whitespace-normal', isDeciding ? 'font-semibold text-primary' : 'text-muted-foreground')}>
                   {i + 1}. {CRITERIA_LABELS[row.key]}
                   {isDeciding && ' · decides'}
                 </TableCell>

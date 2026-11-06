@@ -72,7 +72,8 @@ export function PlaceField({ label, value, onChange, allowCurrentLocation, icon,
     }
   }
 
-  const showCurrent = allowCurrentLocation && (!input || input === value?.label)
+  // Always first while the start field is open, whatever it contains.
+  const showCurrent = !!allowCurrentLocation
   return (
     <div className="flex flex-col gap-1">
       <Command shouldFilter={false} className="relative overflow-visible bg-transparent">
@@ -105,16 +106,16 @@ export function PlaceField({ label, value, onChange, allowCurrentLocation, icon,
             !open && 'hidden',
           )}
         >
-          {input.length >= 2 && input !== value?.label && !loading && <CommandEmpty>No matches</CommandEmpty>}
+          {input.length >= 2 && input !== value?.label && !loading && !showCurrent && <CommandEmpty>No matches</CommandEmpty>}
           <CommandGroup>
             {showCurrent && (
-              <CommandItem value="__current" onSelect={useMyLocation} onMouseDown={(e) => e.preventDefault()}>
+              <CommandItem value="__current" onSelect={useMyLocation} onPointerDown={(e) => e.preventDefault()}>
                 <LocateFixedIcon className="text-primary" />
                 Your location
               </CommandItem>
             )}
             {(input !== value?.label ? options : []).map((o) => (
-              <CommandItem key={`${o.lat},${o.lng}`} value={`${o.lat},${o.lng}`} onSelect={() => choose(o)} onMouseDown={(e) => e.preventDefault()}>
+              <CommandItem key={`${o.lat},${o.lng}`} value={`${o.lat},${o.lng}`} onSelect={() => choose(o)} onPointerDown={(e) => e.preventDefault()}>
                 <MapPinIcon className="text-muted-foreground" />
                 <span className="truncate">{o.label}</span>
               </CommandItem>

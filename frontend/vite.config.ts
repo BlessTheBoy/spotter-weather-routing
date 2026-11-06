@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
   server: {
     proxy: { '/api': 'http://localhost:8000' },
+    // Reachable from a phone on the same Wi-Fi, and through an ngrok HTTPS tunnel for GPS/compass testing.
+    host: true,
+    allowedHosts: ['.ngrok-free.app', '.ngrok.app'],
   },
   preview: {
     proxy: { '/api': 'http://localhost:8000' },
