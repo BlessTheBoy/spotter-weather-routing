@@ -29,6 +29,9 @@ interface Props {
   /** Apply the suggested safer departure (with Undo). */
   onApplyDeparture: (ms: number) => void
   tripDurationS: number
+  /** The tint and the safer-departure suggestion follow this route. */
+  routeId: string
+  routeLabel: string
   layer: Layer
   onLayerChange: (l: Layer) => void
   showHeatmap: boolean
@@ -85,18 +88,18 @@ export function MiniPlayer({ onExpand, ...props }: PlayerProps & { onExpand: () 
  * One 48 h track.
  * - The "Leave" flag above the track is the departure: drag the flag to re-time every route.
  * - The round knob on the track is the forecast clock: drag it (or press Play) to see the map at that hour.
- * - The track is tinted by how safe the best route would be for each departure hour.
+ * - The track is tinted by how safe the selected route would be for each departure hour.
  */
 export function TimelineBar(props: Props) {
-  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, onApplyDeparture, compact, bare } = props
+  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, onApplyDeparture, routeId, routeLabel, compact, bare } = props
   const { hour, playing, start, span, playMs, toggle: play } = useTripPlayer(props)
   const track = useRef<HTMLDivElement>(null)
   const t = plan.timeline
   const pct = (ms: number) => `${Math.min(100, Math.max(0, ((ms - start) / span) * 100))}%`
   const now = Date.parse(t.now)
-  const outlook = departureOutlook(plan, interval)
+  const outlook = departureOutlook(plan, interval, routeId)
   const steps = outlook.map((d) => d.departure)
-  const safer = saferDeparture(plan, interval, departureMs)
+  const safer = saferDeparture(plan, interval, departureMs, routeId)
   const stepW = span ? (HOUR / span) * 100 : 0
   const leaveFrac = span ? (departureMs - start) / span : 0
 
@@ -150,12 +153,12 @@ export function TimelineBar(props: Props) {
       <div className="relative mt-6 mb-1 touch-none select-none">
         <div ref={track} className="relative h-6 cursor-pointer" onPointerDown={(e) => drag(e, setForecast)}>
           <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-full bg-muted">
-            {/* Tint: how bad the best route would be if you left at that hour. */}
+            {/* Tint: how bad the selected route would be if you left at that hour. */}
             {outlook.map((d) => (
               <div
                 key={d.departure}
                 className="absolute inset-y-0"
-                title={`Leave ${formatTime(d.departure)}: best route's worst is ${RISK_LEVELS[d.worst].label}`}
+                title={`${routeLabel} if you leave ${formatTime(d.departure)}: ${RISK_LEVELS[d.worst].label}`}
                 style={{ left: pct(d.departure), width: `${stepW}%`, background: riskColor(d.worst), opacity: 0.75 }}
               />
             ))}

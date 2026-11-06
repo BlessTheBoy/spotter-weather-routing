@@ -236,6 +236,8 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
         onDepartureChange={changeDeparture}
         onApplyDeparture={applyDeparture}
         tripDurationS={route.duration_s}
+        routeId={route.id}
+        routeLabel={route.label}
         layer={layer}
         onLayerChange={setLayer}
         showHeatmap={showHeatmap}

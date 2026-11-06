@@ -32,7 +32,7 @@ export function StartDialog({ open, onOpenChange, plan, interval, route, departu
     .map((id) => ({ route: plan.routes.find((r) => r.id === id)!, bad: severeAndWorse(option.summaries[id]) }))
     .sort((a, b) => a.bad - b.bad)[0]
   const better = other && other.bad < severeAndWorse(summary) ? other : null
-  const later = saferDeparture(plan, interval, departureMs)
+  const later = saferDeparture(plan, interval, departureMs, route.id)
   const Icon = noTravel ? OctagonAlertIcon : TriangleAlertIcon
 
   return (

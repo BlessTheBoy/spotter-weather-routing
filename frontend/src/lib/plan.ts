@@ -111,13 +111,15 @@ export function routeStatesAtTime(plan: Plan, route: Route, interval: Interval, 
   })
 }
 
-/** Worst level on the pick for every departure the pin can take: the "when should I leave" lane. */
-export function departureOutlook(plan: Plan, interval: Interval): { departure: number; worst: Level; routeId: string }[] {
-  return plan.schedule[interval].map((o) => ({
-    departure: Date.parse(o.departure),
-    routeId: o.recommendation.route_id,
-    worst: o.summaries[o.recommendation.route_id].max_level,
-  }))
+/**
+ * Worst level for every departure the pin can take: the "when should I leave" lane.
+ * For one route when given (the selected one), otherwise for whichever route is the pick at that hour.
+ */
+export function departureOutlook(plan: Plan, interval: Interval, routeId?: string): { departure: number; worst: Level; routeId: string }[] {
+  return plan.schedule[interval].map((o) => {
+    const id = routeId ?? o.recommendation.route_id
+    return { departure: Date.parse(o.departure), routeId: id, worst: o.summaries[id].max_level }
+  })
 }
 
 /** The longest run of consecutive departures sharing the best (lowest) worst-level. */
@@ -147,7 +149,7 @@ export function safeAlternatives(plan: Plan, interval: Interval, routeId: string
 export interface SaferDeparture {
   at: number
   routeId: string
-  /** The pick's Severe + No Travel miles now, and at the suggested time. */
+  /** The route's Severe + No Travel miles now, and at the suggested time. */
   badNow: number
   badThen: number
 }
@@ -156,16 +158,15 @@ const badMiles = (s: { miles_by_level: { severe: number; no_travel: number } }) 
 
 /**
  * The one "when to leave" rule, shared by the timeline chip and the Start
- * warnings: the earliest departure after the pin whose pick has no Severe or
- * No Travel miles. Null when leaving at the pin is already clear of them.
+ * warnings: the earliest departure after the pin at which this route has no
+ * Severe or No Travel miles. Null when leaving at the pin is already clear of them.
  */
-export function saferDeparture(plan: Plan, interval: Interval, departureMs: number): SaferDeparture | null {
-  const now = optionAt(plan, interval, departureMs)
-  const badNow = badMiles(now.summaries[now.recommendation.route_id])
+export function saferDeparture(plan: Plan, interval: Interval, departureMs: number, routeId: string): SaferDeparture | null {
+  const badNow = badMiles(optionAt(plan, interval, departureMs).summaries[routeId])
   if (badNow === 0) return null
-  const later = plan.schedule[interval].find((o) => Date.parse(o.departure) > departureMs + 30 * 60_000 && badMiles(o.summaries[o.recommendation.route_id]) === 0)
+  const later = plan.schedule[interval].find((o) => Date.parse(o.departure) > departureMs + 30 * 60_000 && badMiles(o.summaries[routeId]) === 0)
   if (!later) return null
-  return { at: Date.parse(later.departure), routeId: later.recommendation.route_id, badNow, badThen: 0 }
+  return { at: Date.parse(later.departure), routeId, badNow, badThen: 0 }
 }
 
 export function severeAndWorse(summary: { miles_by_level: { severe: number; no_travel: number } }) {
