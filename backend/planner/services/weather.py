@@ -2,9 +2,9 @@
 
 Open-Meteo's free tier charges its rate limit per location (600 a minute), so
 every point is snapped to a 0.1° grid (about 7 miles) before fetching. Each
-snapped point's whole 8-day hourly series is cached until the next model hour,
-which lets the three routes, every checkpoint ETA and every heatmap hour share
-the same few hundred lookups.
+snapped point's whole 8-day hourly series is cached until shortly after the
+next model hour, which lets the three routes, every checkpoint ETA and every
+heatmap hour share the same few hundred lookups.
 """
 
 import logging
@@ -14,9 +14,10 @@ from datetime import UTC, datetime
 
 import requests
 
+from django.core.cache import cache
+
 from ..domain.geometry import LngLat
 from .http import TIMEOUT_S, UpstreamError, session
-from django.core.cache import cache
 
 log = logging.getLogger("planner")
 
@@ -46,12 +47,8 @@ def snap(point: LngLat) -> LngLat:
     return (round(round(point[0] / GRID_DEG) * GRID_DEG, 4), round(round(point[1] / GRID_DEG) * GRID_DEG, 4))
 
 
-def _hour_bucket() -> str:
-    return datetime.now(UTC).strftime("%Y%m%d%H")
-
-
 def _key(point: LngLat) -> str:
-    return f"wx:{_hour_bucket()}:{point[0]}:{point[1]}"
+    return f"wx:{point[0]}:{point[1]}"
 
 
 def _num(values: list) -> tuple[float, ...]:

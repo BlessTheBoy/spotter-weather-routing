@@ -1,6 +1,7 @@
 import type { Place, Plan, PlanRequest } from './types'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
+const MOCK = import.meta.env.VITE_API_MOCK === '1'
 
 export class ApiError extends Error {}
 
@@ -20,11 +21,13 @@ async function parse<T>(res: Response): Promise<T> {
 }
 
 export async function searchPlaces(q: string, signal?: AbortSignal): Promise<Place[]> {
+  if (MOCK) return (await import('../mocks/mockApi')).mockSearchPlaces(q)
   const res = await fetch(`${BASE}/api/geocode?q=${encodeURIComponent(q)}`, { signal })
   return (await parse<{ results: Place[] }>(res)).results
 }
 
 export async function fetchPlan(req: PlanRequest, signal?: AbortSignal): Promise<Plan> {
+  if (MOCK) return (await import('../mocks/mockApi')).mockFetchPlan(req)
   const res = await fetch(`${BASE}/api/plan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
