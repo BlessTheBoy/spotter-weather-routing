@@ -64,7 +64,7 @@ Compare / timeline / map ◀──one JSON (≈165 KB gzipped)──┘
 (no more requests while you drag, switch intervals, play or navigate)
 ```
 
-- **Backend** (`backend/planner`): pure domain modules (`risk`, `recommend`, `geometry`, `timeline`, `corridor`, `guidance`, `region`) with no I/O, services for TomTom, OSRM, Open-Meteo and Photon, and `planner.py` to assemble the plan. 108 pytest tests.
+- **Backend** (`backend/planner`): pure domain modules (`risk`, `recommend`, `geometry`, `timeline`, `corridor`, `guidance`, `region`) with no I/O, services for TomTom, OSRM, Open-Meteo and Photon, and `planner.py` to assemble the plan. 111 pytest tests.
 - **Frontend** (`frontend/src`): `api/types.ts` is the contract. `map/MapView.tsx` drives MapLibre directly. `components/` holds the panels, timeline and Navigate overlay. `mocks/` is the demo engine, which builds the same contract in the browser from recorded routes plus synthetic weather run through a mirror of the risk rules.
 
 ## API choices
@@ -72,7 +72,7 @@ Compare / timeline / map ◀──one JSON (≈165 KB gzipped)──┘
 | Need | Choice | Why |
 |---|---|---|
 | Truck routing | **TomTom** Routing API (free key, no card) | Truck profile with weight, departure-time traffic, and alternatives that also work with waypoints. Keyless options (OSRM, public Valhalla) often return fewer than 3 routes and have no weight. Google's truck routing is allowlisted and returns a single route. |
-| Weather | **Open-Meteo** (no key) | Hourly forecasts 15+ days out, in mph and inches, with many points per request. The free tier is rate-limited per *location*, so points snap to a shared 0.1° grid (coarser for very long trips), are deduplicated across routes and intervals, and are cached until the next model hour. |
+| Weather | **Open-Meteo** (no key) | Hourly forecasts 15+ days out, in mph and inches, with many points per request. The free tier is rate-limited per *location*, so points snap to a shared 0.1° grid (coarser for very long trips), are deduplicated across routes and intervals, and are cached until the next model hour. Each plan is capped at 200 lookups, and the grid coarsens (0.1° → 0.5°) until it fits. |
 | Geocoding | **Photon** (komoot, no key) | Type-ahead search over OpenStreetMap, proxied and cached by Django. |
 | Map | **MapLibre GL** + OpenFreeMap tiles + Mapterhorn terrain | Open source, no key, WebGL with pitch and terrain for the 3D view. Google Maps was considered, but its vector map tilts only 30° at trip zoom, has no terrain, and its terms bar mixing in non-Google routes. |
 
@@ -114,7 +114,7 @@ One Vercel project: the Vite build is served as static files, and Django runs as
 - **Hours of service** (mandatory breaks) aren't modelled, so ETAs are continuous driving.
 - **Weather resolution.** Open-Meteo blends NOAA models at about 3 km, but points snap to a 0.1° grid (about 7 mi) to stay inside the free rate limit. Pulling NOAA's NBM grid directly would give 2.5 km without per-point limits. It worked in a prototype but takes about 35 s cold per corridor through NOAA's public subsetting service, so it's listed as next.
 - **Re-timing.** Moving the departure pin re-times weather exposure with the entered departure's driving time; traffic differences between hours are ignored until you Start.
-- **Free-tier limits.** The demo's synthetic weather is clearly labelled and is never mixed with live data.
+- **Free-tier limits.** Open-Meteo's free tier allows about 10,000 lookups a day per IP. When it's spent, the API answers 503 with `code: "weather_quota"` and the app offers "Use demo data for this trip", which re-runs the same trip on demo data. The allowance resets at 00:00 UTC. A shared `REDIS_URL` cache keeps repeat trips from spending it again. The demo's synthetic weather is clearly labelled and is never mixed with live data.
 
 ## What I'd do next
 
