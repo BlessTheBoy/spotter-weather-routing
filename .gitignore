@@ -9,3 +9,5 @@ dist/
 
 # Assessment brief: kept locally, not published
 *.pdf
+.vercel
+.env*
