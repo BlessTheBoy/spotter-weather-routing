@@ -33,7 +33,6 @@ describe('valuesAt', () => {
 
 describe('positionAt', () => {
   const route = {
-    departure: '2026-11-07T00:00:00Z',
     geometry: [
       [0, 0],
       [10, 0],
@@ -42,11 +41,11 @@ describe('positionAt', () => {
   } as unknown as Route
 
   it('interpolates along the route by time', () => {
-    expect(positionAt(route, Date.parse('2026-11-07T00:30:00Z'))).toEqual([5, 0])
+    expect(positionAt(route, Date.parse('2026-11-07T00:00:00Z'), Date.parse('2026-11-07T00:30:00Z'))).toEqual([5, 0])
   })
 
   it('is null before departure and after arrival', () => {
-    expect(positionAt(route, Date.parse('2026-11-06T23:00:00Z'))).toBeNull()
-    expect(positionAt(route, Date.parse('2026-11-07T02:00:00Z'))).toBeNull()
+    expect(positionAt(route, Date.parse('2026-11-07T00:00:00Z'), Date.parse('2026-11-06T23:00:00Z'))).toBeNull()
+    expect(positionAt(route, Date.parse('2026-11-07T00:00:00Z'), Date.parse('2026-11-07T02:00:00Z'))).toBeNull()
   })
 })

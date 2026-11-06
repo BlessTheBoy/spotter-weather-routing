@@ -64,10 +64,17 @@ export function valuesAt(corridor: Corridor, layer: Layer, hour: number, out: Fl
 }
 
 /** Where the truck is on a route at an absolute time, or null before departure / after arrival. */
-export function positionAt(route: Route, timeMs: number): LngLat | null {
-  const elapsed = (timeMs - Date.parse(route.departure)) / 1000
+export function positionAt(route: Route, departureMs: number, timeMs: number): LngLat | null {
+  const elapsed = (timeMs - departureMs) / 1000
   const times = route.geometry_times_s
   if (elapsed < 0 || elapsed > times[times.length - 1]) return null
+  return positionAfter(route, elapsed)
+}
+
+/** Position after a number of seconds of driving, clamped to the route. */
+export function positionAfter(route: Route, elapsedS: number): LngLat {
+  const times = route.geometry_times_s
+  const elapsed = Math.min(Math.max(0, elapsedS), times[times.length - 1])
   let lo = 0
   let hi = times.length - 1
   while (hi - lo > 1) {

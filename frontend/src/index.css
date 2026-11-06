@@ -71,3 +71,13 @@ body {
 .cp .muted {
   color: #93a3ae;
 }
+.cp-note {
+  margin-top: 6px;
+  color: #f2994a;
+  font-size: 12px;
+}
+.cp .lvl {
+  color: var(--c);
+  font-weight: 700;
+  font-size: 11px;
+}

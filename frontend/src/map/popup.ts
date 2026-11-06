@@ -1,22 +1,32 @@
-import type { Checkpoint, Route } from '../api/types'
+import type { Route } from '../api/types'
 import { formatTime } from '../lib/format'
-import { riskColor, riskLabel } from '../lib/risk'
+import type { CheckpointState } from '../lib/plan'
+import { RISK_LEVELS, riskColor, riskLabel } from '../lib/risk'
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 
-export function checkpointPopupHtml(route: Route, cp: Checkpoint): string {
-  const w = cp.weather
-  const why = cp.drivers.length ? ` · ${esc(cp.drivers.join(' + '))}` : ''
-  const rows = w
-    ? `<tr><td>Wind</td><td>${w.wind_mph} mph <span class="muted">gust ${w.gust_mph}</span></td></tr>
-       <tr><td>Rain</td><td>${w.rain_in_hr.toFixed(2)} in/hr</td></tr>
-       <tr><td>Snow</td><td>${w.snow_in_hr.toFixed(2)} in/hr</td></tr>`
-    : '<tr><td colspan="2">No forecast this far ahead</td></tr>'
+function row(label: string, value: string, level: number) {
+  const tag = level >= 1 ? `<span class="lvl" style="--c:${RISK_LEVELS[level].color}">${RISK_LEVELS[level].label}</span>` : ''
+  return `<tr><td>${label}</td><td>${value}</td><td>${tag}</td></tr>`
+}
+
+export function checkpointPopupHtml(route: Route, s: CheckpointState, loadLb: number): string {
+  if (s.level == null) {
+    return `<div class="cp"><div class="cp-head">${esc(route.label)} · mile ${s.mile.toFixed(0)}</div><div>No forecast this far ahead</div></div>`
+  }
+  const load =
+    s.loadLevel > 0 && s.loadLevel >= s.windLevel
+      ? `<div class="cp-note">${loadLb.toLocaleString()} lb in ${Math.round(s.wind)} mph wind raises this to ${RISK_LEVELS[s.loadLevel].label}.</div>`
+      : ''
   return `
     <div class="cp">
-      <div class="cp-head">${esc(route.label)} · mile ${cp.mile.toFixed(0)}</div>
-      <div class="cp-level" style="--c:${riskColor(cp.level)}">${riskLabel(cp.level)}${why}</div>
-      <div class="cp-eta">ETA ${esc(formatTime(cp.eta))}</div>
-      <table>${rows}</table>
+      <div class="cp-head">${esc(route.label)} · mile ${s.mile.toFixed(0)} · ETA ${esc(formatTime(s.eta))}</div>
+      <div class="cp-level" style="--c:${riskColor(s.level)}">${riskLabel(s.level)}</div>
+      <table>
+        ${row('Wind', `${Math.round(s.wind)} mph <span class="muted">gust ${Math.round(s.gust)}</span>`, Math.max(s.windLevel, s.loadLevel))}
+        ${row('Rain', `${s.rain.toFixed(2)} in/hr`, s.rainLevel)}
+        ${row('Snow', `${s.snow.toFixed(2)} in/hr`, s.snowLevel)}
+      </table>
+      ${load}
     </div>`
 }
