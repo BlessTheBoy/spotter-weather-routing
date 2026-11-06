@@ -11,6 +11,7 @@ import { Box, Button, IconButton, Paper, Stack, ToggleButton, ToggleButtonGroup,
 import type { Instruction, Route } from '../api/types'
 import { formatDuration, formatTime } from '../lib/format'
 import { SPEEDS, type NavState } from '../lib/navigation'
+import { navPadding } from '../map/MapView'
 import type { CheckpointState } from '../lib/plan'
 import { riskColor, riskLabel } from '../lib/risk'
 
@@ -49,8 +50,31 @@ export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange
   const clockMs = nav.source === 'gps' ? Date.now() : departureMs + nav.elapsedS * 1000
   const elements = hazard ? (['wind', 'rain', 'snow'] as const).filter((k) => (k === 'wind' ? Math.max(hazard.windLevel, hazard.loadLevel) : k === 'rain' ? hazard.rainLevel : hazard.snowLevel) === hazard.level) : []
 
+  const { top, bottom } = navPadding(window.innerHeight)
   return (
     <>
+      {/* The puck stays put in the lower third and points up; the map turns under it. */}
+      <Box
+        aria-hidden
+        sx={{
+          position: 'absolute',
+          left: '50%',
+          top: `calc(${top}px + (100% - ${top + bottom}px) / 2)`,
+          transform: 'translate(-50%, -50%)',
+          zIndex: 1,
+          width: 44,
+          height: 44,
+          borderRadius: '50%',
+          bgcolor: 'rgba(64,224,208,0.18)',
+          display: 'grid',
+          placeItems: 'center',
+          pointerEvents: 'none',
+        }}
+      >
+        <svg width="30" height="30" viewBox="0 0 24 24">
+          <path d="M12 2 4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" fill="#40E0D0" stroke="#043344" strokeWidth="1.5" strokeLinejoin="round" />
+        </svg>
+      </Box>
       <Box sx={{ position: 'absolute', top: 12, left: 12, right: { xs: 12, md: 'auto' }, width: { md: 380 }, zIndex: 2 }}>
         <Paper elevation={10} sx={{ bgcolor: '#0F6E56', color: '#fff', px: 2, py: 1.5, borderRadius: 2 }}>
           <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
@@ -94,6 +118,11 @@ export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange
               <Box sx={{ px: 0.75, py: 0.25, borderRadius: 1, bgcolor: 'rgba(242,201,76,0.15)', color: '#F2C94C', fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }} title={nav.reason ?? undefined}>
                 SIMULATED
               </Box>
+              {nav.reason && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'inline' } }}>
+                  {nav.reason}
+                </Typography>
+              )}
               <IconButton size="small" onClick={onTogglePlaying} aria-label={nav.playing ? 'Pause drive' : 'Resume drive'}>
                 {nav.playing ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
               </IconButton>

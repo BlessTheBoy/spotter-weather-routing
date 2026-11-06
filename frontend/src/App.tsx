@@ -11,7 +11,7 @@ import { TimelineBar } from './components/TimelineBar'
 import { createClock } from './lib/clock'
 import type { Layer } from './lib/forecast'
 import { toLocalInput } from './lib/format'
-import { useNavigation } from './lib/navigation'
+import { requestCompass, useNavigation } from './lib/navigation'
 import { routeStates } from './lib/plan'
 import { MapView, type MapMode } from './map/MapView'
 
@@ -119,7 +119,13 @@ export default function App() {
         hoveredCheckpoint={hovered}
         onHoverCheckpoint={setHovered}
         onEdit={() => setMode('plan')}
-        onStart={() => (clock.pause(), setHovered(null), setMode('navigate'))}
+        onStart={() => {
+          // Ask for the compass inside the click: iOS only allows it from a user gesture.
+          void requestCompass()
+          clock.pause()
+          setHovered(null)
+          setMode('navigate')
+        }}
       />
     )
 
@@ -165,7 +171,8 @@ export default function App() {
           clock={clock}
           hoveredCheckpoint={mode === 'compare' ? hovered : null}
           onHoverCheckpoint={setHovered}
-          follow={navigating ? { position: nav.state!.position, bearing: nav.state!.bearing, mile: nav.state!.mile } : null}
+          follow={navigating ? { mile: nav.state!.mile } : null}
+          camera={nav.camera}
           padding={mapPadding}
         />
 

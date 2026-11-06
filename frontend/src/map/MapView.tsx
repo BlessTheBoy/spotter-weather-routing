@@ -3,8 +3,9 @@ import { AttributionControl, LngLatBounds, Map as MapLibre, NavigationControl, P
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { useEffect, useRef } from 'react'
-import type { Interval, LngLat, Plan } from '../api/types'
+import type { Interval, Plan } from '../api/types'
 import type { Clock } from '../lib/clock'
+import type { CameraTarget } from '../lib/navigation'
 import { hourToTime, LAYERS, positionAt, valuesAt, type Layer } from '../lib/forecast'
 import { routeStates, type CheckpointState } from '../lib/plan'
 import { RISK_LEVELS, UNKNOWN_COLOR } from '../lib/risk'
@@ -53,12 +54,15 @@ const RISK_LINE_COLOR = ['match', ['get', 'level'], ...RISK_LEVELS.flatMap((r) =
 
 export type MapMode = 'plan' | 'compare' | 'navigate'
 
-/** Camera target while navigating. */
+/** Navigation progress: the risk line is drawn only ahead of this mile. */
 export interface Follow {
-  position: LngLat
-  bearing: number
-  /** Mile reached so far; the risk line ahead starts here. */
   mile: number
+}
+
+/** Driving camera: close and tilted, with the truck in the lower third like Google Maps. */
+export const NAV_CAMERA = { zoom: 16.5, pitch: 62 }
+export function navPadding(height: number) {
+  return { top: Math.round(height * 0.42), bottom: 110, left: 0, right: 0 }
 }
 
 interface Props {
@@ -75,12 +79,14 @@ interface Props {
   hoveredCheckpoint: number | null
   onHoverCheckpoint: (index: number | null) => void
   follow: Follow | null
+  /** Where the driving camera should be; read every frame while navigating. */
+  camera: { current: CameraTarget | null }
   /** Space the panel or sheet covers, so fitBounds keeps the routes visible. */
   padding: { top: number; bottom: number; left: number; right: number }
 }
 
 export function MapView(props: Props) {
-  const { plan, mode, interval, departureMs, selectedRouteId, layer, showHeatmap, is3D, clock, hoveredCheckpoint, follow } = props
+  const { plan, mode, interval, departureMs, selectedRouteId, layer, showHeatmap, is3D, clock, hoveredCheckpoint, follow, camera } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibre | null>(null)
   const readyRef = useRef<Promise<void> | null>(null)
@@ -147,7 +153,8 @@ export function MapView(props: Props) {
   }, [plan])
 
   // --- selected route at the pin's departure: risk line, checkpoints, badges
-  const mileStep = Math.floor(follow?.mile ?? 0)
+  // Trim the line behind the truck in 0.05 mi steps: fine enough at driving zoom, cheap to redraw.
+  const mileStep = Math.floor((follow?.mile ?? 0) * 20) / 20
   useEffect(() => {
     whenReady((map) => {
       const route = plan?.routes.find((r) => r.id === selectedRouteId)
@@ -235,8 +242,8 @@ export function MapView(props: Props) {
       map.setLayoutProperty('corridor-3d', 'visibility', heat && is3D ? 'visible' : 'none')
       map.setLayoutProperty('route-alt', 'visibility', mode === 'compare' ? 'visible' : 'none')
       map.setLayoutProperty('route-alt-casing', 'visibility', mode === 'compare' ? 'visible' : 'none')
-      map.setLayoutProperty('you', 'visibility', mode === 'navigate' ? 'visible' : 'none')
-      const terrain = is3D || mode === 'navigate'
+      // No relief while driving: at a steep tilt it shifts the road away from the puck.
+      const terrain = is3D && mode === 'compare'
       map.setLayoutProperty('hillshade', 'visibility', terrain ? 'visible' : 'none')
       map.setTerrain(terrain ? { source: 'terrain', exaggeration: 1.4 } : null)
       if (mode === 'compare') map.easeTo({ pitch: is3D ? 58 : 0, bearing: is3D ? -15 : 0, duration: 900 })
@@ -246,21 +253,45 @@ export function MapView(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showHeatmap, is3D, mode])
 
-  // --- navigation camera --------------------------------------------------
+  // --- navigation camera: eased every frame toward the target ---------------
   useEffect(() => {
-    whenReady((map) => {
-      if (!follow) return
-      set(map, 'you', { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: follow.position } }] })
-      map.easeTo({ center: follow.position, bearing: follow.bearing, pitch: 60, zoom: 13, duration: 450, easing: (t) => t, padding: { top: 180, bottom: 200, left: 0, right: 0 } })
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [follow?.position[0], follow?.position[1], follow?.bearing])
+    if (mode !== 'navigate') return
+    let raf = 0
+    let last = 0
+    let cur: CameraTarget | null = null
+    let startedAt = 0
+    const step = (now: number) => {
+      const map = mapRef.current
+      const target = camera.current
+      const dt = last ? Math.min(0.1, (now - last) / 1000) : 0
+      last = now
+      if (map && target) {
+        if (!cur) {
+          cur = { position: [...target.position], bearing: target.bearing }
+          startedAt = now
+          map.easeTo({ center: cur.position, bearing: cur.bearing, ...NAV_CAMERA, padding: navPadding(map.getContainer().clientHeight), duration: 1200 })
+        } else if (!map.isMoving() || now - startedAt > 1300) {
+          // Position is already continuous (it's interpolated every frame), so the camera
+          // sits exactly on the truck; only the heading is smoothed so turns feel gentle.
+          cur.position = target.position
+          const b = 1 - Math.exp(-dt * 3.5)
+          const turn = ((target.bearing - cur.bearing + 540) % 360) - 180
+          cur.bearing = (cur.bearing + turn * b + 360) % 360
+          map.jumpTo({ center: cur.position, bearing: cur.bearing, ...NAV_CAMERA, padding: navPadding(map.getContainer().clientHeight) })
+        }
+      }
+      raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [mode, camera])
 
   // Leaving navigation: back to the whole trip.
   useEffect(() => {
     if (mode === 'navigate' || !plan) return
     whenReady((map) => {
       const [sw, ne] = boundsOf(plan.routes)
+      map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }) // the driving camera's padding persists otherwise
       map.fitBounds(new LngLatBounds(sw, ne), { padding: latest.current.padding, pitch: is3D ? 58 : 0, bearing: 0, duration: 900 })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
