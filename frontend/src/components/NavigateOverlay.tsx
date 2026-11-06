@@ -1,9 +1,10 @@
 import { ArrowUpIcon, ArrowUpLeftIcon, ArrowUpRightIcon, CheckCircle2Icon, CornerUpLeftIcon, CornerUpRightIcon, FlagIcon, MapPinOffIcon, PauseIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { Instruction, Route } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { formatDuration, formatTime } from '@/lib/format'
-import { SPEEDS, type NavState } from '@/lib/navigation'
+import { INTRO_MS, SPEEDS, type NavState } from '@/lib/navigation'
 import type { CheckpointState } from '@/lib/plan'
 import { riskColor, riskLabel } from '@/lib/risk'
 import { navPadding } from '@/map/MapView'
@@ -68,14 +69,20 @@ export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange
     (['wind', 'rain', 'snow'] as const).filter((k) => (k === 'wind' ? Math.max(h.windLevel, h.loadLevel) : k === 'rain' ? h.rainLevel : h.snowLevel) === h.level).join(' and ')
   const { top, bottom } = navPadding(window.innerHeight)
   const offRoute = nav.offRouteMi != null
+  // The puck appears once the camera has flown in and sits on the truck.
+  const [landed, setLanded] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setLanded(true), INTRO_MS)
+    return () => clearTimeout(t)
+  }, [])
 
   return (
     <>
       {/* The puck stays put in the lower third and points up; the map turns under it. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute left-1/2 z-10 grid size-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-primary/20"
-        style={{ top: `calc(${top}px + (100% - ${top + bottom}px) / 2)` }}
+        className="pointer-events-none absolute left-1/2 z-10 grid size-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-primary/20 transition-opacity duration-300"
+        style={{ top: `calc(${top}px + (100% - ${top + bottom}px) / 2)`, opacity: landed ? 1 : 0 }}
       >
         <svg width="32" height="32" viewBox="0 0 24 24">
           <path d="M12 2 4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" fill="#40E0D0" stroke="#043344" strokeWidth="1.5" strokeLinejoin="round" />
