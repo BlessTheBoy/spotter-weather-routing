@@ -9,9 +9,19 @@ import { checkpointsAlong, syntheticInstructions } from './geometry'
 import { loadLevel, rainLevel, recommend, snowLevel, summarize, windLevel } from './rules'
 import { makeField, type ScenarioId, type Weather } from './scenarios'
 
-/** Shape of the recorded v1 responses in ./fixtures. */
+/** The parts of a recorded /api/plan response (backend/fixtures) the demo replays. */
 export interface Fixture {
-  routes: { id: string; label: string; provider: string; distance_mi: number; duration_s: number; geometry: LngLat[]; geometry_times_s: number[] }[]
+  routes: {
+    id: string
+    label: string
+    provider: string
+    distance_mi: number
+    duration_s: number
+    geometry: LngLat[]
+    geometry_times_s: number[]
+    via?: string | null
+    instructions?: Route['instructions']
+  }[]
   corridor: { resolution: number; hours: string[]; cells: Corridor['cells']; wind_mph: number[]; rain_in_hr: number[]; snow_in_hr: number[] }
 }
 
@@ -106,14 +116,15 @@ export function buildPlan(fx: Fixture, req: PlanRequest, scenario: ScenarioId): 
     return {
       id: r.id,
       label: r.label,
-      via: null,
+      via: r.via ?? null,
       provider: r.provider,
       notes: [],
       distance_mi: r.distance_mi,
       duration_s: r.duration_s,
       geometry: r.geometry,
       geometry_times_s: r.geometry_times_s,
-      instructions: syntheticInstructions(r.geometry, r.distance_mi),
+      // Real TomTom guidance when the recording has it; a rough stand-in otherwise.
+      instructions: r.instructions?.length ? r.instructions : syntheticInstructions(r.geometry, r.distance_mi),
       checkpoints,
     }
   })
