@@ -1,5 +1,5 @@
-import { CalendarCheckIcon, PauseIcon, PlayIcon, Undo2Icon } from 'lucide-react'
-import { useRef, type PointerEvent as ReactPointerEvent } from 'react'
+import { CalendarCheckIcon, ChevronDownIcon, PauseIcon, PlayIcon, Undo2Icon } from 'lucide-react'
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Interval, Plan } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,6 +40,9 @@ interface Props {
 export function TimelineBar(props: Props) {
   const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, tripDurationS, layer, onLayerChange, showHeatmap, onShowHeatmapChange, compact } = props
   const hour = useForecastHour(clock)
+  // On a phone the bar starts folded to one lane so the map stays visible.
+  const [expanded, setExpanded] = useState(!compact)
+  const full = !compact || expanded
   const playing = usePlaying(clock)
   const leaveRef = useRef<HTMLDivElement>(null)
   const forecastRef = useRef<HTMLDivElement>(null)
@@ -94,11 +97,12 @@ export function TimelineBar(props: Props) {
   }
 
   const ticks: number[] = []
-  for (let ms = Math.ceil(start / (12 * HOUR)) * 12 * HOUR; ms <= start + span; ms += 12 * HOUR) ticks.push(ms)
+  const tickStep = (full && !compact ? 12 : 24) * HOUR
+  for (let ms = Math.ceil(start / tickStep) * tickStep; ms <= start + span; ms += tickStep) ticks.push(ms)
   const stepW = span ? (HOUR / span) * 100 : 0
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border bg-popover/95 p-3 shadow-xl backdrop-blur">
+    <div className={cn('flex flex-col rounded-2xl border bg-popover/95 shadow-xl backdrop-blur', compact ? 'gap-2 p-2.5' : 'gap-3 p-3')}>
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={play} size="sm" variant={playing ? 'secondary' : 'default'}>
           {playing ? <PauseIcon data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
@@ -106,23 +110,28 @@ export function TimelineBar(props: Props) {
         </Button>
         {mapClock === 'trip' ? (
           <Badge variant="secondary" className="h-6">
-            Map: weather when you get there
+            {compact ? 'Weather when you get there' : 'Map: weather when you get there'}
           </Badge>
         ) : (
           <>
-            <Badge className="h-6 tabular-nums">Map: forecast {formatTime(playMs)}</Badge>
+            <Badge className="h-6 tabular-nums">{compact ? formatTime(playMs) : `Map: forecast ${formatTime(playMs)}`}</Badge>
             <Button size="sm" variant="ghost" onClick={() => (clock.pause(), onMapClockChange('trip'))}>
               <Undo2Icon data-icon="inline-start" />
-              Back to my trip
+              {compact ? 'My trip' : 'Back to my trip'}
             </Button>
           </>
+        )}
+        {compact && (
+          <Button size="icon-sm" variant="ghost" className="ml-auto" onClick={() => setExpanded((e) => !e)} aria-expanded={expanded} aria-label={expanded ? 'Fold the timeline' : 'Show forecast lane and layers'}>
+            <ChevronDownIcon className={cn('transition-transform', expanded && 'rotate-180')} />
+          </Button>
         )}
         <div className="flex-1" />
         {best && currentWorst > best.worst && (
           <Button size="sm" variant="outline" onClick={() => setLeave(best.from)} className="border-risk-low/50">
             <CalendarCheckIcon data-icon="inline-start" className="text-risk-low" />
-            Best window: {formatTime(best.from)}
-            {best.to > best.from && `–${formatTime(best.to)}`}
+            {compact ? `Best: leave ${formatTime(best.from)}` : `Best window: ${formatTime(best.from)}`}
+            {!compact && best.to > best.from && `–${formatTime(best.to)}`}
           </Button>
         )}
         {!compact && <Layers {...{ layer, onLayerChange, showHeatmap, onShowHeatmapChange }} />}
@@ -154,8 +163,8 @@ export function TimelineBar(props: Props) {
           </div>
         </div>
 
-        <span className="text-muted-foreground">Forecast</span>
-        <div ref={forecastRef} className="relative h-7 cursor-pointer touch-none" onPointerDown={(e) => drag(forecastRef.current, e, setForecast)}>
+        {full && <span className="text-muted-foreground">Forecast</span>}
+        <div ref={forecastRef} hidden={!full} className="relative h-7 cursor-pointer touch-none" onPointerDown={(e) => drag(forecastRef.current, e, setForecast)}>
           <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-muted" />
           {/* The trip itself, from the Leave pin to arrival on the selected route. */}
           <div className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-primary/50" style={{ left: pct(departureMs), width: `calc(${pct(tripEnd)} - ${pct(departureMs)})` }} />
@@ -188,7 +197,7 @@ export function TimelineBar(props: Props) {
               Now
             </span>
           )}
-          {ticks.map((ms) => (
+          {ticks.filter((ms) => Math.abs(ms - now) > span * (compact ? 0.16 : 0.08)).map((ms) => (
             <span key={ms} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: pct(ms) }}>
               {formatTime(ms)}
             </span>
@@ -196,8 +205,8 @@ export function TimelineBar(props: Props) {
         </div>
       </div>
 
-      {compact && <Layers {...{ layer, onLayerChange, showHeatmap, onShowHeatmapChange }} />}
-      <Legend layer={layer} />
+      {compact && expanded && <Layers {...{ layer, onLayerChange, showHeatmap, onShowHeatmapChange }} />}
+      {full && <Legend layer={layer} />}
     </div>
   )
 }

@@ -7,7 +7,9 @@ const PEEK = 120
 const HANDLE = 28
 const TOP_GAP = 56
 /** The opening height follows the content, but never covers more than this share of the screen. */
-const MAX_INITIAL = 0.6
+const MAX_INITIAL = 0.66
+/** Compare has a map to look at, so its sheet opens lower. */
+const MAX_INITIAL_COMPARE = 0.48
 
 interface Props {
   snap: SheetSnap
@@ -32,8 +34,10 @@ export function BottomSheet({ snap, onSnapChange, contentKey, children, onHeight
   const samples = useRef<{ y: number; t: number }[]>([])
 
   const vh = typeof window === 'undefined' ? 800 : window.innerHeight
-  const safe = 16 // plus env(safe-area-inset-bottom) via padding below
-  const initial = Math.min(Math.round(vh * MAX_INITIAL), contentH + HANDLE + safe)
+  // Bottom padding (1rem, or the safe area on notched phones) plus a little air.
+  const safe = 16 + 20
+  const cap = contentKey.startsWith('compare') ? MAX_INITIAL_COMPARE : MAX_INITIAL
+  const initial = Math.min(Math.round(vh * cap), contentH + HANDLE + safe)
   const heights: Record<SheetSnap, number> = { peek: PEEK, initial, full: vh - TOP_GAP }
   const height = drag ?? heights[snap]
 

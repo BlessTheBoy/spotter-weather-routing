@@ -157,7 +157,7 @@ export default function App() {
   const timelineOnMap = mode === 'compare' && plan && route
   const mapPadding = desktop
     ? { top: timelineOnMap ? 250 : 60, bottom: 40, left: 60, right: 60 }
-    : { top: timelineOnMap ? 240 : 60, bottom: sheet === 'peek' ? 140 : sheetH + 16, left: 24, right: 24 }
+    : { top: timelineOnMap ? 170 : 60, bottom: sheet === 'peek' ? 140 : sheetH + 16, left: 24, right: 24 }
   const navigating = mode === 'navigate' && plan && route && nav.state
 
   return (
