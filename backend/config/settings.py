@@ -37,7 +37,8 @@ REST_FRAMEWORK = {
     "UNAUTHENTICATED_USER": None,
 }
 
-REDIS_URL = os.environ.get("REDIS_URL")
+# Upstash through the Vercel Marketplace sets REDIS_URL and/or KV_URL (both rediss://).
+REDIS_URL = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 CACHES = {
     "default": (
         {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}
