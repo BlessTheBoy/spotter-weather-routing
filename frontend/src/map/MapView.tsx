@@ -78,6 +78,8 @@ interface Props {
   padding: { top: number; bottom: number; left: number; right: number }
   /** The user panned, zoomed or turned the map themselves (not a fit or the driving camera). */
   onUserMove?: () => void
+  /** Bump to show every route again, even after the user moved the map. */
+  fitKey?: number
 }
 
 export function MapView(props: Props) {
@@ -311,6 +313,22 @@ export function MapView(props: Props) {
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [padKey])
+
+  // Asked to show the whole trip again (Play): wait for the deck to fold, then fit.
+  useEffect(() => {
+    if (!props.fitKey || !plan || mode === 'navigate') return
+    userMoved.current = false
+    const t = setTimeout(
+      () =>
+        whenReady((map) => {
+          const [sw, ne] = boundsOf(plan.routes)
+          map.fitBounds(new LngLatBounds(sw, ne), { padding: latest.current.padding, duration: 700 })
+        }),
+      300,
+    )
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.fitKey])
 
   // Leaving navigation: back to the whole trip.
   useEffect(() => {

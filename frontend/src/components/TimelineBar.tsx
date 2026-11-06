@@ -36,6 +36,49 @@ interface Props {
   compact?: boolean
   /** Inside another card (the mobile deck): no card chrome of its own, and Layers lives on the map. */
   bare?: boolean
+  /** Play was pressed: the mobile deck folds away and the map shows every route. */
+  onPlay?: () => void
+}
+
+type PlayerProps = Pick<Props, 'plan' | 'clock' | 'mapClock' | 'onMapClockChange' | 'departureMs' | 'tripDurationS' | 'onPlay'>
+
+/** Play and pause the trip on the forecast clock: from departure to arrival, never past it. */
+function useTripPlayer({ plan, clock, mapClock, onMapClockChange, departureMs, tripDurationS, onPlay }: PlayerProps) {
+  const hour = useForecastHour(clock)
+  const playing = usePlaying(clock)
+  const start = Date.parse(plan.timeline.start)
+  const span = Date.parse(plan.timeline.end) - start
+  const playMs = start + hour * HOUR
+  const tripEnd = departureMs + tripDurationS * 1000
+  function toggle() {
+    if (playing) return clock.pause()
+    onMapClockChange('forecast')
+    // Replay the trip from departure unless the knob is already inside it.
+    if (mapClock !== 'forecast' || playMs < departureMs || playMs >= Math.min(tripEnd, start + span) - HOUR) clock.set((departureMs - start) / HOUR)
+    // Stop when the truck arrives: the rest of the 48 h isn't part of this trip.
+    clock.play((tripEnd - start) / HOUR)
+    onPlay?.()
+  }
+  return { hour, playing, start, span, playMs, tripEnd, toggle }
+}
+
+/** The timeline folded into the minimized deck: play/pause, the hour on the map, and how far along the trip it is. */
+export function MiniPlayer({ onExpand, ...props }: PlayerProps & { onExpand: () => void }) {
+  const { playing, playMs, tripEnd, toggle } = useTripPlayer(props)
+  const done = Math.min(1, Math.max(0, (playMs - props.departureMs) / Math.max(1, tripEnd - props.departureMs)))
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <Button size="icon" className="size-9 shrink-0 rounded-full" onClick={toggle} aria-label={playing ? 'Pause' : 'Play the trip'}>
+        {playing ? <PauseIcon /> : <PlayIcon />}
+      </Button>
+      <button type="button" className="flex min-w-0 flex-1 flex-col gap-1 text-left" onClick={onExpand}>
+        <span className="truncate text-sm font-semibold">Forecast for {formatTime(playMs)}</span>
+        <span className="h-1 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Trip played" aria-valuenow={Math.round(done * 100)}>
+          <span className="block h-full rounded-full bg-primary" style={{ width: `${done * 100}%` }} />
+        </span>
+      </button>
+    </div>
+  )
 }
 
 /**
@@ -45,20 +88,15 @@ interface Props {
  * - The track is tinted by how safe the best route would be for each departure hour.
  */
 export function TimelineBar(props: Props) {
-  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, onApplyDeparture, tripDurationS, compact, bare } = props
-  const hour = useForecastHour(clock)
-  const playing = usePlaying(clock)
+  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, onApplyDeparture, compact, bare } = props
+  const { hour, playing, start, span, playMs, toggle: play } = useTripPlayer(props)
   const track = useRef<HTMLDivElement>(null)
   const t = plan.timeline
-  const start = Date.parse(t.start)
-  const span = Date.parse(t.end) - start
   const pct = (ms: number) => `${Math.min(100, Math.max(0, ((ms - start) / span) * 100))}%`
   const now = Date.parse(t.now)
   const outlook = departureOutlook(plan, interval)
   const steps = outlook.map((d) => d.departure)
   const safer = saferDeparture(plan, interval, departureMs)
-  const playMs = start + hour * HOUR
-  const tripEnd = departureMs + tripDurationS * 1000
   const stepW = span ? (HOUR / span) * 100 : 0
   const leaveFrac = span ? (departureMs - start) / span : 0
 
@@ -81,14 +119,6 @@ export function TimelineBar(props: Props) {
   function nudgeLeave(dir: number) {
     const i = steps.findIndex((s) => s >= departureMs - 1)
     setLeave(steps[Math.min(steps.length - 1, Math.max(0, i + dir))])
-  }
-  function play() {
-    if (playing) return clock.pause()
-    onMapClockChange('forecast')
-    // Replay the trip from departure unless the knob is already inside it.
-    if (mapClock !== 'forecast' || playMs < departureMs || playMs >= Math.min(tripEnd, start + span) - HOUR) clock.set((departureMs - start) / HOUR)
-    // Stop when the truck arrives: the rest of the 48 h isn't part of this trip.
-    clock.play((tripEnd - start) / HOUR)
   }
 
   const tickStep = (compact ? 24 : 12) * HOUR
@@ -131,8 +161,6 @@ export function TimelineBar(props: Props) {
             ))}
             {now > start && <div className="absolute inset-y-0 left-0 bg-background/70" style={{ width: pct(now) }} />}
           </div>
-          {/* The trip itself sits under the tint, so it never hides the departure colours. */}
-          <div className="absolute top-[calc(50%+6px)] h-1 rounded-full bg-primary" style={{ left: pct(departureMs), width: `calc(${pct(tripEnd)} - ${pct(departureMs)})` }} />
           <div
             role="slider"
             tabIndex={0}

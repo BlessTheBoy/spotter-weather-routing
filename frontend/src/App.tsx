@@ -5,7 +5,7 @@ import type { Interval, Place, Plan } from '@/api/types'
 import { ComparePanel, RouteChips, RouteDetails, RouteSummaryLine, StartButton, TripTitle, routeName, type CompareProps } from '@/components/ComparePanel'
 import { NavigateOverlay } from '@/components/NavigateOverlay'
 import { PlanPanel, type TripDraft } from '@/components/PlanPanel'
-import { LayersButton, TimelineBar } from '@/components/TimelineBar'
+import { LayersButton, MiniPlayer, TimelineBar } from '@/components/TimelineBar'
 import { TopDeck } from '@/components/TopDeck'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer'
@@ -63,6 +63,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
   const [deckOpen, setDeckOpen] = useState(true)
   const [deckH, setDeckH] = useState(260)
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [fitKey, setFitKey] = useState(0)
   const inflight = useRef<AbortController | null>(null)
 
   const route = plan?.routes.find((r) => r.id === selectedRouteId) ?? null
@@ -217,6 +218,12 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
     </div>
   )
 
+  // Playing the forecast: fold the mobile deck and show every route, so the weather moving along them is in view.
+  function onPlay() {
+    if (!desktop) setDeckOpen(false)
+    setFitKey((k) => k + 1)
+  }
+
   const timeline =
     comparing && route ? (
       <TimelineBar
@@ -235,6 +242,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
         onShowHeatmapChange={setShowHeatmap}
         compact={!desktop}
         bare={!desktop}
+        onPlay={onPlay}
       />
     ) : null
   const scenario = demo && (
@@ -282,6 +290,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
           camera={nav.camera}
           padding={mapPadding}
           onUserMove={() => !desktop && mode !== 'navigate' && setDeckOpen(false)}
+          fitKey={fitKey}
         />
 
         {desktop && mode !== 'navigate' && (
@@ -344,6 +353,17 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
               header={
                 deckOpen ? (
                   <TripTitle {...compareProps} />
+                ) : mapClock === 'forecast' ? (
+                  <MiniPlayer
+                    plan={plan!}
+                    clock={clock}
+                    mapClock={mapClock}
+                    onMapClockChange={setMapClock}
+                    departureMs={departureMs}
+                    tripDurationS={route.duration_s}
+                    onPlay={onPlay}
+                    onExpand={() => setDeckOpen(true)}
+                  />
                 ) : (
                   <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => setDeckOpen(true)}>
                     <span
