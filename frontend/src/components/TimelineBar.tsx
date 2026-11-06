@@ -34,6 +34,8 @@ interface Props {
   showHeatmap: boolean
   onShowHeatmapChange: (on: boolean) => void
   compact?: boolean
+  /** Inside another card (the mobile deck): no card chrome of its own, and Layers lives on the map. */
+  bare?: boolean
 }
 
 /**
@@ -43,7 +45,7 @@ interface Props {
  * - The track is tinted by how safe the best route would be for each departure hour.
  */
 export function TimelineBar(props: Props) {
-  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, onApplyDeparture, tripDurationS, compact } = props
+  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, onApplyDeparture, tripDurationS, compact, bare } = props
   const hour = useForecastHour(clock)
   const playing = usePlaying(clock)
   const track = useRef<HTMLDivElement>(null)
@@ -94,7 +96,7 @@ export function TimelineBar(props: Props) {
   for (let ms = Math.ceil(start / tickStep) * tickStep; ms <= start + span; ms += tickStep) if (Math.abs(ms - now) > span * (compact ? 0.16 : 0.08)) ticks.push(ms)
 
   return (
-    <div className={cn('flex flex-col gap-1 rounded-2xl border bg-popover/95 shadow-xl backdrop-blur', compact ? 'px-3 pt-2 pb-1' : 'px-4 pt-3 pb-2')}>
+    <div className={cn('flex flex-col gap-1', !bare && 'rounded-2xl border bg-popover/95 shadow-xl backdrop-blur', !bare && (compact ? 'px-3 pt-2 pb-1' : 'px-4 pt-3 pb-2'))}>
       <div className="flex items-center gap-2">
         <Button size="icon" className="rounded-full" onClick={play} aria-label={playing ? 'Pause' : 'Play the trip'}>
           {playing ? <PauseIcon /> : <PlayIcon />}
@@ -110,7 +112,7 @@ export function TimelineBar(props: Props) {
           </Button>
         )}
         {safer && !compact && <SaferButton safer={safer} departureMs={departureMs} onClick={() => onApplyDeparture(safer.at)} />}
-        <LayersButton {...props} />
+        {!bare && <LayersButton {...props} />}
       </div>
       {safer && compact && <SaferButton safer={safer} departureMs={departureMs} onClick={() => onApplyDeparture(safer.at)} className="self-start" />}
 
@@ -198,17 +200,25 @@ function SaferButton({ safer, departureMs, onClick, className }: { safer: SaferD
   )
 }
 
+type LayerProps = Pick<Props, 'layer' | 'onLayerChange' | 'showHeatmap' | 'onShowHeatmapChange'> & { round?: boolean }
+
 /** Like Google's layers button: the weather layer, its type and the legend live behind one control. */
-function LayersButton({ layer, onLayerChange, showHeatmap, onShowHeatmapChange }: Props) {
+export function LayersButton({ layer, onLayerChange, showHeatmap, onShowHeatmapChange, round }: LayerProps) {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button size="sm" variant="outline" aria-label="Weather layer">
-          <LayersIcon data-icon="inline-start" />
-          {showHeatmap ? LAYERS[layer].label : 'Off'}
-        </Button>
+        {round ? (
+          <Button size="icon" variant="outline" className="size-11 rounded-full bg-popover/95 shadow-lg" aria-label={`Weather layer: ${showHeatmap ? LAYERS[layer].label : 'off'}`}>
+            <LayersIcon />
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" aria-label="Weather layer">
+            <LayersIcon data-icon="inline-start" />
+            {showHeatmap ? LAYERS[layer].label : 'Off'}
+          </Button>
+        )}
       </PopoverTrigger>
-      <PopoverContent align="end" className="flex w-72 flex-col gap-3">
+      <PopoverContent align="end" side={round ? 'left' : undefined} className="flex w-72 max-w-[calc(100vw-5rem)] flex-col gap-3">
         <div className="flex items-center justify-between">
           <Label htmlFor="heat">Weather on the map</Label>
           <Switch id="heat" checked={showHeatmap} onCheckedChange={onShowHeatmapChange} />

@@ -216,3 +216,14 @@
   font-weight: 700;
   font-size: 11px;
 }
+
+/* On phones the top deck covers the top-right corner; pinch and two-finger gestures replace zoom and compass. */
+@media (max-width: 899px) {
+  .maplibregl-ctrl-top-right {
+    display: none;
+  }
+  /* Attribution sits above the floating Start button. */
+  .maplibregl-ctrl-bottom-right {
+    bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 3.25rem);
+  }
+}

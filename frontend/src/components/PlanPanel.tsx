@@ -11,6 +11,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/
 import { Spinner } from '@/components/ui/spinner'
 import { inRoutingRegion, REGION_MESSAGE } from '@/lib/location'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
 export const MAX_STOPS = 3
 const LEGAL_GROSS_LB = 80_000
@@ -50,12 +51,30 @@ interface Props {
   /** Offered when live weather is out of quota: continue the same trip on demo data. */
   onUseDemo?: () => void
   onSubmit: () => void
+  /** Mobile deck: tighter spacing, departure and load without visible labels. */
+  compact?: boolean
 }
 
-export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, loading, error, onUseDemo, onSubmit }: Props) {
+export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, loading, error, onUseDemo, onSubmit, compact }: Props) {
   const set = (patch: Partial<TripDraft>) => onDraftChange({ ...draft, ...patch })
   const loadMsg = loadError(draft.load)
   const heavy = !loadMsg && Number(draft.load) > LEGAL_GROSS_LB
+
+  const addStop = draft.stops.length < MAX_STOPS && (
+    <Button type="button" variant="ghost" size="sm" className="self-start text-muted-foreground" onClick={() => set({ stops: [...draft.stops, null] })}>
+      <PlusIcon data-icon="inline-start" />
+      Add stop
+    </Button>
+  )
+  const intervalMenu = (
+    <DropdownLike
+      icon={SlidersHorizontalIcon}
+      label={`Checkpoints every ${interval} mi`}
+      options={INTERVALS.map((v) => ({ value: v, label: `Every ${v} miles` }))}
+      value={interval}
+      onChange={onIntervalChange}
+    />
+  )
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -63,8 +82,8 @@ export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, lo
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4">
-      <FieldGroup className="gap-3">
+    <form onSubmit={submit} className={cn('flex flex-col', compact ? 'gap-2.5' : 'gap-4')}>
+      <FieldGroup className={compact ? 'gap-2' : 'gap-3'}>
         <div className="grid grid-cols-[1fr_auto] items-center gap-x-1">
           <div className="flex flex-col gap-2">
             <PlaceField label="Choose starting point" value={draft.origin} onChange={(origin) => set({ origin })} allowCurrentLocation icon={<CircleDotIcon className="text-primary" />} />
@@ -95,20 +114,17 @@ export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, lo
             <TooltipContent>Swap start and destination</TooltipContent>
           </Tooltip>
         </div>
-        {draft.stops.length < MAX_STOPS && (
-          <Button type="button" variant="ghost" size="sm" className="self-start text-muted-foreground" onClick={() => set({ stops: [...draft.stops, null] })}>
-            <PlusIcon data-icon="inline-start" />
-            Add stop
-          </Button>
-        )}
+        {!compact && addStop}
 
-        <div className="grid grid-cols-[minmax(0,1fr)_9.5rem] gap-3">
+        <div className={compact ? 'grid grid-cols-[minmax(0,1fr)_7rem] gap-2' : 'grid grid-cols-[minmax(0,1fr)_9.5rem] gap-3'}>
           <Field>
-            <FieldLabel>Departure</FieldLabel>
+            <FieldLabel className={cn(compact && 'sr-only')}>Departure</FieldLabel>
             <DepartureField value={draft.departure} onChange={(departure) => set({ departure })} />
           </Field>
           <Field data-invalid={!!loadMsg || undefined}>
-            <FieldLabel htmlFor="load">Load</FieldLabel>
+            <FieldLabel htmlFor="load" className={cn(compact && 'sr-only')}>
+              Load
+            </FieldLabel>
             <InputGroup className="h-10 bg-card">
               <InputGroupInput id="load" inputMode="numeric" value={draft.load} aria-invalid={!!loadMsg || undefined} onChange={(e) => set({ load: e.target.value.replace(/[^\d]/g, '') })} />
               <InputGroupAddon align="inline-end">
@@ -120,13 +136,14 @@ export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, lo
           </Field>
         </div>
 
-        <DropdownLike
-          icon={SlidersHorizontalIcon}
-          label={`Checkpoints every ${interval} mi`}
-          options={INTERVALS.map((v) => ({ value: v, label: `Every ${v} miles` }))}
-          value={interval}
-          onChange={onIntervalChange}
-        />
+        {compact ? (
+          <div className="flex items-center justify-between gap-2">
+            {addStop}
+            {intervalMenu}
+          </div>
+        ) : (
+          intervalMenu
+        )}
       </FieldGroup>
 
       {error && (

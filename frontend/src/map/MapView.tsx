@@ -76,6 +76,8 @@ interface Props {
   camera: { current: CameraTarget | null }
   /** Space the panel or sheet covers, so fitBounds keeps the routes visible. */
   padding: { top: number; bottom: number; left: number; right: number }
+  /** The user panned, zoomed or turned the map themselves (not a fit or the driving camera). */
+  onUserMove?: () => void
 }
 
 export function MapView(props: Props) {
@@ -90,6 +92,8 @@ export function MapView(props: Props) {
   const forecastHourKey = useRef<number | null>(null)
   const latest = useRef(props)
   latest.current = props
+  // Once the user has moved the map, padding changes no longer re-fit it under their fingers.
+  const userMoved = useRef(false)
 
   const whenReady = (fn: (map: MapLibre) => void) => {
     const map = mapRef.current
@@ -109,11 +113,18 @@ export function MapView(props: Props) {
       maxPitch: 70,
       attributionControl: false,
     })
+    map.on('movestart', (e) => {
+      if (!('originalEvent' in e) || !e.originalEvent) return
+      userMoved.current = true
+      latest.current.onUserMove?.()
+    })
     map.addControl(new NavigationControl({ visualizePitch: true }), 'top-right')
     map.addControl(new AttributionControl({ compact: true, customAttribution: ['Weather © Open-Meteo.com (CC BY 4.0)', 'Routing © TomTom', '© Mapterhorn'] }), 'bottom-right')
     mapRef.current = map
     readyRef.current = new Promise((resolve) =>
       map.on('load', async () => {
+        // The compact attribution opens expanded on small screens; start it folded to its (i) button.
+        map.getContainer().querySelector('.maplibregl-ctrl-attrib')?.classList.remove('maplibregl-compact-show')
         await loadBadgeImages(map)
         addLayers(map)
         bindInteractions(map, latest)
@@ -139,6 +150,7 @@ export function MapView(props: Props) {
       set(map, 'routes', routeLines(plan))
       set(map, 'endpoints', endpoints(plan))
       const [sw, ne] = boundsOf(plan.routes)
+      userMoved.current = false
       map.fitBounds(new LngLatBounds(sw, ne), { padding: latest.current.padding, duration: 900 })
       paintHour()
     })
@@ -289,7 +301,7 @@ export function MapView(props: Props) {
   // Re-fit when the panel or sheet changes how much of the map is visible.
   const padKey = `${props.padding.top}:${props.padding.bottom}`
   useEffect(() => {
-    if (mode !== 'compare' || !plan) return
+    if (mode !== 'compare' || !plan || userMoved.current) return
     const t = setTimeout(() =>
       whenReady((map) => {
         const [sw, ne] = boundsOf(plan.routes)
@@ -306,6 +318,7 @@ export function MapView(props: Props) {
     whenReady((map) => {
       const [sw, ne] = boundsOf(plan.routes)
       map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 }) // the driving camera's padding persists otherwise
+      userMoved.current = false
       map.fitBounds(new LngLatBounds(sw, ne), { padding: latest.current.padding, pitch: is3D ? 58 : 0, bearing: 0, duration: 900 })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
