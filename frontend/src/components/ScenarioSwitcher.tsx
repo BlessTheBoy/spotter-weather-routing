@@ -15,7 +15,7 @@ export function ScenarioSwitcher({ onChange }: { onChange: () => void }) {
       <PopoverTrigger asChild>
         <Button size="sm" variant="outline" className="border-risk-moderate/40 bg-popover/90 text-risk-moderate">
           <FlaskConicalIcon data-icon="inline-start" />
-          Mock: {SCENARIOS.find((s) => s.id === current)?.label}
+          Demo: {SCENARIOS.find((s) => s.id === current)?.label}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-72 p-0" align="start">

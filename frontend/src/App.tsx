@@ -14,7 +14,6 @@ import { routeStates } from '@/lib/plan'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { MapView, type MapClock, type MapMode } from '@/map/MapView'
 
-const MOCK = import.meta.env.VITE_API_MOCK === '1'
 const ScenarioSwitcher = lazy(() => import('@/components/ScenarioSwitcher').then((m) => ({ default: m.ScenarioSwitcher })))
 
 const INTERVAL_KEY = 'checkpoint-interval'
@@ -37,7 +36,7 @@ const DEFAULT_DRAFT: TripDraft = {
   load: '42000',
 }
 
-export default function App() {
+export default function App({ demo }: { demo: boolean }) {
   const desktop = useMediaQuery('(min-width: 900px)')
   const clock = useMemo(() => createClock(48), [])
   const [mode, setMode] = useState<MapMode>('plan')
@@ -221,7 +220,7 @@ export default function App() {
                   </ToggleGroupItem>
                 </ToggleGroup>
               )}
-              {MOCK && (
+              {demo && (
                 <Suspense>
                   <ScenarioSwitcher onChange={() => plan && submit()} />
                 </Suspense>
