@@ -4,7 +4,7 @@ Pick a trip, a departure time and a load. The app returns three truck routes, ch
 
 React + TypeScript (Vite, shadcn/ui, MapLibre GL) on top of Django + DRF.
 
-- **Live app:** _link after deploy_
+- **Live app:** https://spotter-weather-routing-zeta.vercel.app
 - **Walkthrough (Loom):** _link after recording_
 
 ## Try it
