@@ -2,9 +2,13 @@
 
 Open-Meteo's free tier charges its rate limit per location (600 a minute), so
 every point is snapped to a 0.1° grid (about 7 miles) before fetching. Each
-snapped point's whole 8-day hourly series is cached until shortly after the
-next model hour, which lets the three routes, every checkpoint ETA and every
-heatmap hour share the same few hundred lookups.
+snapped point's whole 10-day hourly series is cached until shortly after the
+next model hour, which lets the three routes, all three checkpoint intervals,
+every departure hour and every heatmap hour share the same few hundred lookups.
+Ten days covers a departure a week out plus a long trip and the 48 h track.
+
+Very long trips can pass a coarser grid (0.2°, 0.3°...) to stay in budget.
+Coarser grid points are also 0.1° points, so they share the same cache.
 """
 
 import logging
@@ -23,7 +27,7 @@ log = logging.getLogger("planner")
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 GRID_DEG = 0.1
-FORECAST_DAYS = 8
+FORECAST_DAYS = 10
 CHUNK = 200
 HOURLY = ("wind_speed_10m", "wind_gusts_10m", "rain", "showers", "snowfall")
 
@@ -43,12 +47,12 @@ class Hourly:
         return i if 0 <= i < len(self.wind_mph) else None
 
 
-def snap(point: LngLat) -> LngLat:
-    return (round(round(point[0] / GRID_DEG) * GRID_DEG, 4), round(round(point[1] / GRID_DEG) * GRID_DEG, 4))
+def snap(point: LngLat, grid: float = GRID_DEG) -> LngLat:
+    return (round(round(point[0] / grid) * grid, 4), round(round(point[1] / grid) * grid, 4))
 
 
 def _key(point: LngLat) -> str:
-    return f"wx:{point[0]}:{point[1]}"
+    return f"wx{FORECAST_DAYS}:{point[0]}:{point[1]}"
 
 
 def _num(values: list) -> tuple[float, ...]:
@@ -97,9 +101,9 @@ def _request(points: list[LngLat]) -> list[Hourly]:
     raise UpstreamError("The weather service is busy. Try again in a minute.")
 
 
-def forecasts(points: list[LngLat]) -> dict[LngLat, Hourly]:
-    """Forecast for each snapped point. Callers look up with snap(point)."""
-    wanted = list(dict.fromkeys(snap(p) for p in points))
+def forecasts(points: list[LngLat], grid: float = GRID_DEG) -> dict[LngLat, Hourly]:
+    """Forecast for each snapped point. Callers look up with snap(point, grid)."""
+    wanted = list(dict.fromkeys(snap(p, grid) for p in points))
     found = cache.get_many([_key(p) for p in wanted])
     out = {p: found[_key(p)] for p in wanted if _key(p) in found}
     missing = [p for p in wanted if p not in out]

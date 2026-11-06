@@ -1,6 +1,6 @@
 import pytest
 
-from planner.domain.recommend import RiskSample, recommend, summarize
+from planner.domain.recommend import RiskSample, reason, recommend, summarize
 from planner.domain.risk import Risk
 
 L, M, H, S, N = Risk.LOW, Risk.MODERATE, Risk.HIGH, Risk.SEVERE, Risk.NO_TRAVEL
@@ -71,3 +71,31 @@ def test_full_ranking_order():
 
 def test_single_route_has_no_deciding_criterion():
     assert recommend([route("a", [(L, 1)])]).deciding_criterion is None
+
+
+LABELS = {"a": "Route A", "b": "Route B"}
+
+
+def explain(a, b):
+    rec = recommend([a, b])
+    by_id = {a.route_id: a, b.route_id: b}
+    return reason(by_id[rec.route_id], by_id[rec.ranking[1]], rec.deciding_criterion, LABELS)
+
+
+def test_reason_on_a_low_risk_tie_does_not_suggest_danger():
+    text = explain(route("a", [(L, 100)], duration_h=10), route("b", [(L, 100)], duration_h=10.5))
+    assert text == "Low risk the whole way, as on Route B, and 30 min faster."
+
+
+def test_reason_on_a_full_tie():
+    assert explain(route("a", [(L, 100)]), route("b", [(L, 100)])) == "Low risk the whole way, with the same travel time as Route B."
+    assert explain(route("a", [(M, 100)]), route("b", [(M, 100)])) == "Same risk and travel time as Route B."
+
+
+def test_reason_names_the_deciding_numbers():
+    text = explain(route("a", [(S, 10), (L, 90)]), route("b", [(S, 25), (L, 75)]))
+    assert text == "Fewest Severe miles: 10.0 vs 25.0 on Route B."
+
+
+def test_reason_with_one_route():
+    assert reason(route("a", [(L, 1)]), None, None, LABELS) == "Only one route was found."

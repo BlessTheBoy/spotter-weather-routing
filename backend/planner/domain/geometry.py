@@ -4,7 +4,10 @@ import math
 from bisect import bisect_left
 from dataclasses import dataclass
 
+import numpy as np
+
 EARTH_RADIUS_MI = 3958.7613
+EARTH_RADIUS_M = 6_371_008.8
 METERS_PER_MILE = 1609.344
 
 LngLat = tuple[float, float]
@@ -109,10 +112,38 @@ def decode_polyline(encoded: str, precision: int = 5) -> list[LngLat]:
     return coords
 
 
-def simplify(points: list[LngLat], max_points: int) -> list[int]:
-    """Indices of an evenly thinned subset, always keeping both ends."""
+def douglas_peucker(points: list[LngLat], tolerance_m: float = 5.0) -> list[int]:
+    """Indices of the vertices Douglas–Peucker keeps at `tolerance_m`, both ends included.
+
+    Straight stretches collapse to their end points while every curve keeps
+    enough vertices to stay within the tolerance of the original line. Distances
+    are measured in a flat frame scaled at the route's mean latitude, which is
+    accurate to a few percent of the tolerance across a long trip.
+    """
     n = len(points)
-    if n <= max_points:
+    if n < 3:
         return list(range(n))
-    step = (n - 1) / (max_points - 1)
-    return sorted({round(i * step) for i in range(max_points)})
+    pts = np.radians(np.asarray(points, dtype=float))
+    k = math.cos(pts[:, 1].mean())
+    x = pts[:, 0] * k * EARTH_RADIUS_M
+    y = pts[:, 1] * EARTH_RADIUS_M
+    keep = np.zeros(n, dtype=bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b - a < 2:
+            continue
+        px, py = x[a + 1 : b], y[a + 1 : b]
+        dx, dy = x[b] - x[a], y[b] - y[a]
+        seg2 = dx * dx + dy * dy
+        # Distance to the segment (not the infinite line), so loops are kept too.
+        t = np.clip(((px - x[a]) * dx + (py - y[a]) * dy) / seg2, 0.0, 1.0) if seg2 > 0 else 0.0
+        d2 = (px - (x[a] + t * dx)) ** 2 + (py - (y[a] + t * dy)) ** 2
+        i = int(np.argmax(d2))
+        if d2[i] > tolerance_m * tolerance_m:
+            m = a + 1 + i
+            keep[m] = True
+            stack.append((a, m))
+            stack.append((m, b))
+    return np.flatnonzero(keep).tolist()

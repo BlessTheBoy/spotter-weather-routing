@@ -42,7 +42,8 @@ CACHES = {
     "default": (
         {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}
         if REDIS_URL
-        else {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}
+        # One plan stores ~500 weather points; the default 300-entry cap would evict them (and the routes) at once.
+        else {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "OPTIONS": {"MAX_ENTRIES": 20_000}}
     )
 }
 

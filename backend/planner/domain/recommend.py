@@ -71,3 +71,32 @@ def recommend(summaries: list[RouteSummary]) -> Recommendation:
                 deciding = name
                 break
     return Recommendation(ranked[0].route_id, [s.route_id for s in ranked], deciding)
+
+
+def reason(winner: RouteSummary, runner: RouteSummary | None, criterion: str | None, labels: dict[str, str]) -> str:
+    """One line on why the winner ranks first, against the runner-up.
+
+    When the routes tie on risk the copy says what they share ("Low risk the
+    whole way") rather than suggesting the other route is less safe.
+    """
+    if runner is None:
+        return "Only one route was found."
+    other = labels[runner.route_id]
+    m, n = winner.miles_by_level, runner.miles_by_level
+    if criterion == "no_travel_miles":
+        return f"Fewest No Travel miles: {m[Risk.NO_TRAVEL]:.1f} vs {n[Risk.NO_TRAVEL]:.1f} on {other}."
+    if criterion == "severe_miles":
+        return f"Fewest Severe miles: {m[Risk.SEVERE]:.1f} vs {n[Risk.SEVERE]:.1f} on {other}."
+    if criterion == "high_miles":
+        return f"Same Severe miles, fewest High miles: {m[Risk.HIGH]:.1f} vs {n[Risk.HIGH]:.1f} on {other}."
+    if criterion == "average_risk":
+        return f"Same Severe and High miles, lower average risk: {winner.average_risk:.2f} vs {runner.average_risk:.2f} on {other}."
+    all_low = winner.max_level == Risk.LOW and runner.max_level == Risk.LOW
+    if criterion == "travel_time":
+        saved = runner.sort_key[-1] - winner.sort_key[-1]
+        if all_low:
+            return f"Low risk the whole way, as on {other}, and {saved} min faster."
+        return f"Same risk as {other} and {saved} min faster."
+    if all_low:
+        return f"Low risk the whole way, with the same travel time as {other}."
+    return f"Same risk and travel time as {other}."

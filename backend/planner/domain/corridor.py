@@ -1,9 +1,11 @@
 """The heatmap corridor: H3 hexagons covering a band around every route.
 
-The resolution is chosen per trip so the cell count stays inside the weather
-budget: short trips get fine hexes, cross-country trips coarser ones.
+The resolution is chosen per trip so the weather lookups stay inside budget:
+short trips get fine hexes, cross-country trips coarser ones. The caller says
+what a set of cells costs; by default each cell is one lookup.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import h3
@@ -36,14 +38,18 @@ def _cells_at(routes: list[list[LngLat]], res: int) -> set[str]:
     return {n for c in cells for n in h3.grid_disk(c, 1)}
 
 
-def corridor(routes: list[list[LngLat]], max_cells: int) -> tuple[int, list[Cell]]:
+def center(cell_id: str) -> LngLat:
+    lat, lng = h3.cell_to_latlng(cell_id)
+    return (lng, lat)
+
+
+def corridor(routes: list[list[LngLat]], budget: int, cost: Callable[[set[str]], int] = len) -> tuple[int, list[Cell]]:
     for res in sorted(RESOLUTIONS, reverse=True):
         ids = _cells_at(routes, res)
-        if len(ids) <= max_cells or res == min(RESOLUTIONS):
+        if cost(ids) <= budget or res == min(RESOLUTIONS):
             break
     cells = []
     for cid in sorted(ids):
-        lat, lng = h3.cell_to_latlng(cid)
         ring = [(round(x, 5), round(y, 5)) for y, x in h3.cell_to_boundary(cid)]
-        cells.append(Cell(cid, (lng, lat), ring + ring[:1]))
+        cells.append(Cell(cid, center(cid), ring + ring[:1]))
     return res, cells

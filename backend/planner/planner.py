@@ -1,62 +1,110 @@
-"""Builds a trip plan: routes -> checkpoints -> weather at ETA -> risk -> recommendation.
+"""Builds a v2 trip plan, the shape in frontend/src/api/types.ts.
 
-Also builds the corridor heatmap: every hex cell's risk and raw weather for
-each of the next 49 hours, so the frontend's 0–48h slider never waits on the
-network.
+routes -> timeline -> checkpoints every 10, 25 and 50 mi -> each checkpoint's
+hourly weather and risk -> the ranking for every departure hour the pin can
+reach -> the corridor heatmap for every track hour.
+
+Everything the departure pin and the interval switch can change is computed
+here, so the UI never waits on the network after the plan arrives.
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from .domain.corridor import corridor
-from .domain.geometry import Checkpoint, checkpoints_along, simplify
-from .domain.recommend import RiskSample, RouteSummary, recommend, summarize
-from .domain.risk import Risk, assess
+import numpy as np
+
+from .domain.corridor import center, corridor
+from .domain.geometry import checkpoints_along, douglas_peucker
+from .domain.recommend import RiskSample, RouteSummary, reason, recommend, summarize
+from .domain.risk import Risk, load_levels, rain_levels, snow_levels, wind_levels
+from .domain.timeline import HOUR, TRACK_HOURS, Timeline, timeline_for
 from .services.routing import Route, route_options
 from .services.weather import Hourly, forecasts, snap
 
-HEATMAP_HOURS = 49  # 0..48 inclusive
+INTERVALS = (10, 25, 50)
 WEATHER_BUDGET = 520  # locations per plan; Open-Meteo allows 600 a minute
-MAX_GEOMETRY_POINTS = 1500
+MIN_CORRIDOR_CELLS = 120
+# Snap grids for weather lookups, finest first; long trips step up to stay in budget.
+GRIDS = (0.1, 0.2, 0.3, 0.5)
+GEOMETRY_TOLERANCE_M = 5.0
+LEVEL_KEYS = ("level", "wind_level", "rain_level", "snow_level", "load_level")
+
+
+@dataclass(frozen=True)
+class Place:
+    label: str
+    lat: float
+    lng: float
+
+    @property
+    def lnglat(self) -> tuple[float, float]:
+        return (self.lng, self.lat)
+
+    def json(self) -> dict:
+        return {"label": self.label, "lat": self.lat, "lng": self.lng}
 
 
 @dataclass(frozen=True)
 class PlanRequest:
-    origin: tuple[float, float]
-    destination: tuple[float, float]
+    origin: Place
+    destination: Place
+    stops: list[Place]
     departure: datetime
     load_lb: float
-    interval_mi: int
 
 
 def _iso(ts: float) -> str:
-    return datetime.fromtimestamp(ts, UTC).isoformat().replace("+00:00", "Z")
+    """Millisecond ISO-8601 in UTC, as JavaScript's toISOString writes it."""
+    ms = round(ts * 1000)
+    return datetime.fromtimestamp(ms // 1000, UTC).strftime("%Y-%m-%dT%H:%M:%S") + f".{ms % 1000:03d}Z"
 
 
-def _checkpoint(cp: Checkpoint, departure_ts: float, wx: Hourly, load_lb: float) -> tuple[dict, RiskSample | None]:
-    eta = departure_ts + cp.eta_offset_s
-    i = wx.index_at(eta)
-    base = {
-        "mile": round(cp.mile, 1),
-        "lng": round(cp.lng, 5),
-        "lat": round(cp.lat, 5),
-        "eta": _iso(eta),
-        "eta_offset_s": round(cp.eta_offset_s),
-        "represents_mi": round(cp.represents_mi, 2),
+class _Weather:
+    """Each snapped point's whole forecast as numpy arrays, with every risk level per hour."""
+
+    def __init__(self, wx: dict, grid: float, load_lb: float):
+        self.wx, self.grid, self.load_lb = wx, grid, load_lb
+        self._arrays: dict = {}
+
+    def arrays(self, point: tuple[float, float]) -> tuple[Hourly, dict[str, np.ndarray]]:
+        key = snap(point, self.grid)
+        hourly = self.wx[key]
+        if key not in self._arrays:
+            wind = np.asarray(hourly.wind_mph)
+            rain = np.asarray(hourly.rain_in)
+            snow = np.asarray(hourly.snow_in)
+            a = {
+                "wind_mph": wind,
+                "gust_mph": np.asarray(hourly.gust_mph),
+                "rain_in_hr": rain,
+                "snow_in_hr": snow,
+                "wind_level": wind_levels(wind),
+                "rain_level": rain_levels(rain),
+                "snow_level": snow_levels(snow),
+                "load_level": load_levels(wind, self.load_lb),
+            }
+            a["level"] = np.maximum.reduce([a["wind_level"], a["rain_level"], a["snow_level"], a["load_level"]])
+            self._arrays[key] = a
+        return hourly, self._arrays[key]
+
+    def window(self, point: tuple[float, float], start: float, hours: int) -> tuple[dict[str, np.ndarray], bool]:
+        """`hours` hourly values from `start`. Hours past the forecast repeat its last hour."""
+        hourly, a = self.arrays(point)
+        idx = round((start - hourly.start) / HOUR) + np.arange(hours)
+        n = len(hourly.wind_mph)
+        return {k: v[np.clip(idx, 0, n - 1)] for k, v in a.items()}, bool(idx[-1] >= n)
+
+
+def _series_json(w: dict[str, np.ndarray]) -> dict:
+    out = {
+        "wind_mph": np.round(w["wind_mph"], 1).tolist(),
+        "gust_mph": np.round(w["gust_mph"], 1).tolist(),
+        "rain_in_hr": np.round(w["rain_in_hr"], 3).tolist(),
+        "snow_in_hr": np.round(w["snow_in_hr"], 3).tolist(),
     }
-    if i is None:
-        return {**base, "level": None, "drivers": [], "weather": None}, None
-    wind, gust, rain, snow = wx.wind_mph[i], wx.gust_mph[i], wx.rain_in[i], wx.snow_in[i]
-    a = assess(wind, rain, snow, load_lb)
-    weather = {
-        "forecast_hour": _iso(wx.start + i * 3600),
-        "wind_mph": round(wind, 1),
-        "gust_mph": round(gust, 1),
-        "rain_in_hr": round(rain, 3),
-        "snow_in_hr": round(snow, 3),
-    }
-    levels = {"wind": a.wind.label, "rain": a.rain.label, "snow": a.snow.label, "load": a.load.label}
-    return {**base, "level": int(a.level), "drivers": a.drivers, "levels": levels, "weather": weather}, RiskSample(a.level, cp.represents_mi)
+    for k in LEVEL_KEYS:
+        out[k] = w[k].tolist()
+    return out
 
 
 def _summary_json(s: RouteSummary) -> dict:
@@ -67,114 +115,163 @@ def _summary_json(s: RouteSummary) -> dict:
     }
 
 
-def _reason(winner: RouteSummary, runner: RouteSummary | None, criterion: str | None, labels: dict[str, str]) -> str:
-    if runner is None:
-        return "Only one distinct route was found."
-    other = labels[runner.route_id]
-    m, n = winner.miles_by_level, runner.miles_by_level
-    if criterion == "no_travel_miles":
-        return f"Fewest No Travel miles: {m[Risk.NO_TRAVEL]:.1f} vs {n[Risk.NO_TRAVEL]:.1f} on {other}."
-    if criterion == "severe_miles":
-        return f"Fewest Severe miles: {m[Risk.SEVERE]:.1f} vs {n[Risk.SEVERE]:.1f} on {other}."
-    if criterion == "high_miles":
-        return f"Same Severe miles, fewest High miles: {m[Risk.HIGH]:.1f} vs {n[Risk.HIGH]:.1f} on {other}."
-    if criterion == "average_risk":
-        return f"Same Severe and High miles, lowest average risk: {winner.average_risk:.2f} vs {runner.average_risk:.2f} on {other}."
-    if criterion == "travel_time":
-        saved = round((runner.duration_s - winner.duration_s) / 60)
-        return f"Ties {other} on every risk measure and is {saved} min faster."
-    return f"Ties {other} on every measure."
+@dataclass
+class _RouteWork:
+    route: Route
+    # The Douglas–Peucker line: what the map draws and checkpoints are placed on.
+    points: list[tuple[float, float]]
+    times: list[float]
+    # Per interval: checkpoint JSON, eta offsets, represented miles and the (checkpoints x hours) level matrix.
+    checkpoints: dict
+    etas: dict
+    miles: dict
+    levels: dict
 
 
-def _route_json(r: Route, departure_ts: float, checkpoints: list[dict], summary: RouteSummary) -> dict:
-    keep = simplify(r.points, MAX_GEOMETRY_POINTS)
+def _choose_grid(points: list[tuple[float, float]]) -> tuple[float, set]:
+    """The finest snap grid that leaves room for a corridor in the weather budget."""
+    for grid in GRIDS:
+        snapped = {snap(p, grid) for p in points}
+        if len(snapped) + MIN_CORRIDOR_CELLS <= WEATHER_BUDGET:
+            break
+    return grid, snapped
+
+
+def _schedule(work: list[_RouteWork], timeline: Timeline, interval: int) -> list[dict]:
+    departures = np.asarray(timeline.departures())
+    labels = {w.route.id: w.route.label for w in work}
+    sampled = {}
+    for w in work:
+        # Hour index at each checkpoint for each departure, rounded as JavaScript's Math.round does.
+        idx = np.floor((departures[:, None] + w.etas[interval][None, :] - timeline.series_start) / HOUR + 0.5).astype(int)
+        idx = np.clip(idx, 0, timeline.series_hours - 1)
+        sampled[w.route.id] = np.take_along_axis(w.levels[interval], idx.T, axis=1).T  # (departures x checkpoints)
+
+    options = []
+    for d, dep in enumerate(departures):
+        summaries = {}
+        for w in work:
+            r = w.route
+            samples = [RiskSample(Risk(int(lvl)), m) for lvl, m in zip(sampled[r.id][d], w.miles[interval])]
+            summaries[r.id] = summarize(r.id, r.distance_mi, r.duration_s, samples)
+        rec = recommend(list(summaries.values()))
+        runner = summaries[rec.ranking[1]] if len(rec.ranking) > 1 else None
+        options.append(
+            {
+                "departure": _iso(float(dep)),
+                "summaries": {rid: _summary_json(s) for rid, s in summaries.items()},
+                "recommendation": {
+                    "route_id": rec.route_id,
+                    "ranking": rec.ranking,
+                    "deciding_criterion": rec.deciding_criterion,
+                    "reason": reason(summaries[rec.route_id], runner, rec.deciding_criterion, labels),
+                },
+            }
+        )
+    return options
+
+
+def _route_json(w: _RouteWork) -> dict:
+    r = w.route
     return {
         "id": r.id,
         "label": r.label,
+        "via": r.roads,
         "provider": r.provider,
-        "forced_via": list(r.via) if r.via else None,
         "notes": r.notes,
         "distance_mi": round(r.distance_mi, 1),
         "duration_s": round(r.duration_s),
-        "departure": _iso(departure_ts),
-        "arrival": _iso(departure_ts + r.duration_s),
-        "geometry": [[round(r.points[i][0], 5), round(r.points[i][1], 5)] for i in keep],
-        "geometry_times_s": [round(r.times_s[i]) for i in keep],
-        "summary": _summary_json(summary),
-        "checkpoints": checkpoints,
+        "geometry": [[round(lng, 5), round(lat, 5)] for lng, lat in w.points],
+        "geometry_times_s": [round(t) for t in w.times],
+        "instructions": [{"mile": i.mile, "maneuver": i.maneuver, "text": i.text, "road": i.road} for i in r.instructions],
+        "checkpoints": {str(k): v for k, v in w.checkpoints.items()},
     }
 
 
 def build_plan(req: PlanRequest) -> dict:
     now = datetime.now(UTC)
-    departure = max(req.departure, now)
-    departure_ts = departure.timestamp()
+    stops = [req.origin.lnglat, *(s.lnglat for s in req.stops), req.destination.lnglat]
+    routes = route_options(stops, max(req.departure, now), req.load_lb)
+    timeline = timeline_for(now.timestamp(), req.departure.timestamp(), max(r.duration_s for r in routes))
 
-    routes = route_options(req.origin, req.destination, departure, req.load_lb)
-    route_cps = [checkpoints_along(r.points, r.times_s, req.interval_mi, r.distance_mi) for r in routes]
+    work = []
+    for r in routes:
+        keep = douglas_peucker(r.points, GEOMETRY_TOLERANCE_M)
+        work.append(_RouteWork(r, [r.points[i] for i in keep], [r.times_s[i] for i in keep], {}, {}, {}, {}))
+    raw_cps = {(w.route.id, k): checkpoints_along(w.points, w.times, k, w.route.distance_mi) for w in work for k in INTERVALS}
 
-    cp_points = {snap((c.lng, c.lat)) for cps in route_cps for c in cps}
-    cell_budget = max(120, WEATHER_BUDGET - len(cp_points))
-    res, cells = corridor([r.points for r in routes], cell_budget)
+    grid, cp_points = _choose_grid([(c.lng, c.lat) for cps in raw_cps.values() for c in cps])
+    # A corridor costs the lookups its cells add beyond the checkpoints' (fine cells share grid points).
+    res, cells = corridor(
+        [w.points for w in work],
+        max(MIN_CORRIDOR_CELLS, WEATHER_BUDGET - len(cp_points)),
+        lambda ids: len({snap(center(c), grid) for c in ids} - cp_points),
+    )
+    wx = _Weather(forecasts([(c.lng, c.lat) for cps in raw_cps.values() for c in cps] + [c.center for c in cells], grid), grid, req.load_lb)
 
-    wx = forecasts([(c.lng, c.lat) for cps in route_cps for c in cps] + [c.center for c in cells])
+    past_horizon = False
+    for w in work:
+        for k in INTERVALS:
+            cps = raw_cps[(w.route.id, k)]
+            out, levels = [], []
+            for cp in cps:
+                series, beyond = wx.window((cp.lng, cp.lat), timeline.series_start, timeline.series_hours)
+                past_horizon |= beyond
+                levels.append(series["level"])
+                out.append(
+                    {
+                        "mile": round(cp.mile, 1),
+                        "lng": round(cp.lng, 5),
+                        "lat": round(cp.lat, 5),
+                        "eta_offset_s": round(cp.eta_offset_s),
+                        "represents_mi": round(cp.represents_mi, 2),
+                        "series": _series_json(series),
+                    }
+                )
+            w.checkpoints[k] = out
+            w.etas[k] = np.asarray([c.eta_offset_s for c in cps])
+            w.miles[k] = [c.represents_mi for c in cps]
+            w.levels[k] = np.vstack(levels)
+    if past_horizon:
+        for w in work:
+            w.route.notes.append("The forecast ends before this trip could; its last hour is repeated after that.")
 
-    summaries, routes_json = [], []
-    for r, cps in zip(routes, route_cps):
-        cp_json, samples = [], []
-        for cp in cps:
-            data, sample = _checkpoint(cp, departure_ts, wx[snap((cp.lng, cp.lat))], req.load_lb)
-            cp_json.append(data)
-            if sample:
-                samples.append(sample)
-        if len(samples) < len(cps):
-            r.notes.append("Some checkpoints fall past the forecast horizon and are left out of the risk totals.")
-        s = summarize(r.id, r.distance_mi, r.duration_s, samples)
-        summaries.append(s)
-        routes_json.append(_route_json(r, departure_ts, cp_json, s))
-
-    rec = recommend(summaries)
-    by_id = {s.route_id: s for s in summaries}
-    labels = {r.id: r.label for r in routes}
-    runner = by_id[rec.ranking[1]] if len(rec.ranking) > 1 else None
-
-    hour0 = now.replace(minute=0, second=0, microsecond=0).timestamp()
-    hours = [hour0 + h * 3600 for h in range(HEATMAP_HOURS)]
-    risk, wind, rain, snow = [], [], [], []
-    for ts in hours:
-        for c in cells:
-            series = wx[snap(c.center)]
-            i = series.index_at(ts)
-            if i is None:  # can't happen inside an 8-day series; keeps arrays aligned
-                risk.append(-1), wind.append(0), rain.append(0), snow.append(0)
-                continue
-            w, ra, sn = series.wind_mph[i], series.rain_in[i], series.snow_in[i]
-            risk.append(int(assess(w, ra, sn, req.load_lb).level))
-            wind.append(round(w, 1))
-            rain.append(round(ra, 3))
-            snow.append(round(sn, 3))
+    hours = [timeline.start + h * HOUR for h in range(TRACK_HOURS + 1)]
+    grid_cols = {key: [] for key in ("risk", "wind_mph", "rain_in_hr", "snow_in_hr")}
+    for c in cells:
+        series, _ = wx.window(c.center, timeline.start, len(hours))
+        grid_cols["risk"].append(series["level"])
+        grid_cols["wind_mph"].append(np.round(series["wind_mph"], 1))
+        grid_cols["rain_in_hr"].append(np.round(series["rain_in_hr"], 3))
+        grid_cols["snow_in_hr"].append(np.round(series["snow_in_hr"], 3))
+    # (cells x hours) -> flattened [hour * cell_count + cell].
+    flat = {k: (np.vstack(v).T.ravel().tolist() if v else []) for k, v in grid_cols.items()}
 
     return {
         "generated_at": _iso(now.timestamp()),
-        "departure": _iso(departure_ts),
-        "departure_adjusted": departure > req.departure + timedelta(minutes=1),
+        "origin": req.origin.json(),
+        "destination": req.destination.json(),
+        "stops": [s.json() for s in req.stops],
         "load_lb": req.load_lb,
-        "interval_mi": req.interval_mi,
-        "routes": routes_json,
-        "recommendation": {
-            "route_id": rec.route_id,
-            "ranking": rec.ranking,
-            "deciding_criterion": rec.deciding_criterion,
-            "reason": _reason(by_id[rec.route_id], runner, rec.deciding_criterion, labels),
+        "timeline": {
+            "now": _iso(timeline.now),
+            "start": _iso(timeline.start),
+            "end": _iso(timeline.end),
+            "departure": _iso(timeline.departure),
+            "departure_min": _iso(timeline.departure_min),
+            "departure_max": _iso(timeline.departure_max),
+            "long_range_after": _iso(timeline.long_range_after),
+            "series_start": _iso(timeline.series_start),
         },
+        "routes": [_route_json(w) for w in work],
+        "schedule": {str(k): _schedule(work, timeline, k) for k in INTERVALS},
         "corridor": {
             "resolution": res,
             "hours": [_iso(t) for t in hours],
             "cells": [{"id": c.id, "center": list(c.center), "boundary": [list(p) for p in c.boundary]} for c in cells],
-            # Flattened [hour * cell_count + cell] arrays.
-            "risk": risk,
-            "wind_mph": wind,
-            "rain_in_hr": rain,
-            "snow_in_hr": snow,
+            "risk": flat["risk"],
+            "wind_mph": flat["wind_mph"],
+            "rain_in_hr": flat["rain_in_hr"],
+            "snow_in_hr": flat["snow_in_hr"],
         },
     }
