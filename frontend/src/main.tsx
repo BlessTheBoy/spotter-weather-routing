@@ -1,18 +1,15 @@
-import '@fontsource/dm-sans/400.css'
-import '@fontsource/dm-sans/500.css'
-import '@fontsource/dm-sans/700.css'
-import { CssBaseline, ThemeProvider } from '@mui/material'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { Toaster } from './components/ui/sonner'
+import { TooltipProvider } from './components/ui/tooltip'
 import './index.css'
-import { theme } from './theme'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
+    <TooltipProvider delayDuration={200}>
       <App />
-    </ThemeProvider>
+      <Toaster position="top-center" theme="dark" />
+    </TooltipProvider>
   </StrictMode>,
 )

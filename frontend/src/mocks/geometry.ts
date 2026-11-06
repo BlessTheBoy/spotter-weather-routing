@@ -1,5 +1,5 @@
 // Mock-only mirror of backend/planner/domain/geometry.py.
-import type { Instruction, LngLat } from '../api/types'
+import type { Instruction, LngLat } from '@/api/types'
 
 const R_MI = 3958.7613
 const rad = Math.PI / 180

@@ -1,11 +1,14 @@
-import MyLocationIcon from '@mui/icons-material/MyLocation'
-import PlaceOutlinedIcon from '@mui/icons-material/PlaceOutlined'
-import { Autocomplete, Box, CircularProgress, InputAdornment, TextField } from '@mui/material'
-import { useEffect, useState, type ReactNode } from 'react'
-import { searchPlaces } from '../api/client'
-import type { Place } from '../api/types'
-
-const CURRENT = 'Your location'
+import { Command as CommandPrimitive } from 'cmdk'
+import { LocateFixedIcon, MapPinIcon } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { searchPlaces } from '@/api/client'
+import type { Place } from '@/api/types'
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
+import { FieldError } from '@/components/ui/field'
+import { InputGroup, InputGroupAddon } from '@/components/ui/input-group'
+import { Spinner } from '@/components/ui/spinner'
+import { describeCurrentLocation, inRoutingRegion, REGION_MESSAGE } from '@/lib/location'
+import { cn } from '@/lib/utils'
 
 interface Props {
   label: string
@@ -13,34 +16,24 @@ interface Props {
   onChange: (place: Place | null) => void
   /** Offer "Your location" (browser geolocation) as the first option. */
   allowCurrentLocation?: boolean
-  icon?: ReactNode
+  icon: ReactNode
   autoFocus?: boolean
 }
 
-type Option = Place & { current?: boolean }
-
-function locate(): Promise<Place> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) return reject(new Error('Location is not available in this browser.'))
-    navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ label: CURRENT, lat: p.coords.latitude, lng: p.coords.longitude }),
-      () => reject(new Error('Allow location access, or type a starting place.')),
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
-    )
-  })
-}
-
+/** Search-as-you-type place picker. Keyboard: arrows to move, Enter to pick, Esc to close. */
 export function PlaceField({ label, value, onChange, allowCurrentLocation, icon, autoFocus }: Props) {
   const [input, setInput] = useState(value?.label ?? '')
   const [options, setOptions] = useState<Place[]>([])
+  const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [locating, setLocating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => setInput(value?.label ?? ''), [value])
 
   useEffect(() => {
-    if (input.length < 2 || input === value?.label) return
+    if (!open || input.length < 2 || input === value?.label) return
     const ctrl = new AbortController()
     // Debounce typing so we send one search per pause, not per keystroke.
     const t = setTimeout(() => {
@@ -54,16 +47,24 @@ export function PlaceField({ label, value, onChange, allowCurrentLocation, icon,
       clearTimeout(t)
       ctrl.abort()
     }
-  }, [input, value?.label])
+  }, [input, open, value?.label])
 
-  const shown: Option[] = allowCurrentLocation && (!input || input === value?.label) ? [{ label: CURRENT, lat: 0, lng: 0, current: true }, ...options] : options
-
-  async function pick(o: Option | null) {
+  function choose(place: Place) {
     setError(null)
-    if (!o?.current) return onChange(o)
+    if (!inRoutingRegion(place)) setError(REGION_MESSAGE)
+    onChange(place)
+    setOpen(false)
+    inputRef.current?.blur()
+  }
+
+  async function useMyLocation() {
+    setOpen(false)
+    setError(null)
     setLocating(true)
     try {
-      onChange(await locate())
+      const place = await describeCurrentLocation()
+      if (!inRoutingRegion(place)) setError(`You're in ${place.label.replace(/^Your location · /, '')}. ${REGION_MESSAGE}`)
+      onChange(place)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -71,42 +72,57 @@ export function PlaceField({ label, value, onChange, allowCurrentLocation, icon,
     }
   }
 
+  const showCurrent = allowCurrentLocation && (!input || input === value?.label)
   return (
-    <Autocomplete<Option>
-      value={value}
-      options={shown}
-      loading={loading}
-      filterOptions={(x) => x}
-      getOptionLabel={(o) => o.label}
-      getOptionKey={(o) => (o.current ? 'current' : `${o.lat},${o.lng}`)}
-      isOptionEqualToValue={(a, b) => a.label === b.label && a.lat === b.lat && a.lng === b.lng}
-      onChange={(_, o) => pick(o)}
-      inputValue={input}
-      onInputChange={(_, v) => setInput(v)}
-      noOptionsText={input.length < 2 ? 'Type a city or address' : 'No matches'}
-      renderOption={({ key, ...p }, o) => (
-        <Box component="li" key={key} {...p} sx={{ gap: 1.25 }}>
-          {o.current ? <MyLocationIcon fontSize="small" color="primary" /> : <PlaceOutlinedIcon fontSize="small" sx={{ color: 'text.secondary' }} />}
-          {o.label}
-        </Box>
-      )}
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          placeholder={label}
-          autoFocus={autoFocus}
-          error={!!error}
-          helperText={error}
-          slotProps={{
-            ...params.slotProps,
-            input: {
-              ...params.slotProps.input,
-              startAdornment: <InputAdornment position="start">{locating ? <CircularProgress size={16} /> : icon}</InputAdornment>,
-            },
-            htmlInput: { ...params.slotProps.htmlInput, 'aria-label': label },
-          }}
-        />
-      )}
-    />
+    <div className="flex flex-col gap-1">
+      <Command shouldFilter={false} className="relative overflow-visible bg-transparent">
+        <InputGroup className="h-10 bg-card" data-invalid={!!error || undefined}>
+          <InputGroupAddon>{locating ? <Spinner /> : icon}</InputGroupAddon>
+          <CommandPrimitive.Input
+            ref={inputRef}
+            data-slot="input-group-control"
+            aria-label={label}
+            aria-invalid={!!error || undefined}
+            placeholder={label}
+            autoFocus={autoFocus}
+            value={input}
+            onValueChange={(v) => {
+              setInput(v)
+              setOpen(true)
+            }}
+            onFocus={(e) => {
+              e.currentTarget.select()
+              setOpen(true)
+            }}
+            onBlur={() => setTimeout(() => setOpen(false), 120)}
+            onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+            className="h-full flex-1 truncate bg-transparent px-2 text-sm outline-none placeholder:text-muted-foreground"
+          />
+        </InputGroup>
+        <CommandList
+          className={cn(
+            'absolute top-full right-0 left-0 z-50 mt-1 max-h-72 rounded-lg border bg-popover text-popover-foreground shadow-lg',
+            !open && 'hidden',
+          )}
+        >
+          {input.length >= 2 && input !== value?.label && !loading && <CommandEmpty>No matches</CommandEmpty>}
+          <CommandGroup>
+            {showCurrent && (
+              <CommandItem value="__current" onSelect={useMyLocation} onMouseDown={(e) => e.preventDefault()}>
+                <LocateFixedIcon className="text-primary" />
+                Your location
+              </CommandItem>
+            )}
+            {(input !== value?.label ? options : []).map((o) => (
+              <CommandItem key={`${o.lat},${o.lng}`} value={`${o.lat},${o.lng}`} onSelect={() => choose(o)} onMouseDown={(e) => e.preventDefault()}>
+                <MapPinIcon className="text-muted-foreground" />
+                <span className="truncate">{o.label}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </CommandList>
+      </Command>
+      {error && <FieldError className="px-1 text-xs">{error}</FieldError>}
+    </div>
   )
 }

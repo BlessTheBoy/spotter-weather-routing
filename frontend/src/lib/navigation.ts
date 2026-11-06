@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { LngLat, Route } from '../api/types'
+import type { LngLat, Route } from '@/api/types'
 import { positionAfter } from './forecast'
 
 const EARTH_RADIUS_MI = 3958.7613
@@ -76,7 +76,7 @@ export async function requestCompass(): Promise<void> {
  * The camera target updates every frame through `camera`; React state (for
  * the banners) updates a few times a second.
  */
-export function useNavigation(route: Route | null, active: boolean) {
+export function useNavigation(route: Route | null, active: boolean, preview = false) {
   const [state, setState] = useState<NavState | null>(null)
   const camera = useRef<CameraTarget | null>(null)
   const speed = useRef<number>(60)
@@ -151,7 +151,8 @@ export function useNavigation(route: Route | null, active: boolean) {
       watch = null
     }
 
-    if (!navigator.geolocation) simulate('Location unavailable')
+    if (preview) simulate('Preview of the planned departure')
+    else if (!navigator.geolocation) simulate('Location unavailable')
     else {
       navigator.geolocation.getCurrentPosition(
         (p) => {
@@ -185,7 +186,7 @@ export function useNavigation(route: Route | null, active: boolean) {
       window.removeEventListener('deviceorientationabsolute', onOrientation as EventListener)
       window.removeEventListener('deviceorientation', onOrientation)
     }
-  }, [route, active])
+  }, [route, active, preview])
 
   return {
     state,

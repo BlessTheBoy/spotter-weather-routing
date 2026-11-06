@@ -1,4 +1,4 @@
-import type { Corridor, LngLat, Route } from '../api/types'
+import type { Corridor, LngLat, Route } from '@/api/types'
 
 export type Layer = 'risk' | 'wind_mph' | 'rain_in_hr' | 'snow_in_hr'
 
@@ -91,4 +91,38 @@ export function positionAfter(route: Route, elapsedS: number): LngLat {
 
 export function hourToTime(corridor: Corridor, hour: number): number {
   return Date.parse(corridor.hours[0]) + hour * 3600_000
+}
+
+/**
+ * Trip view: each hex shows the forecast for the hour the selected truck is
+ * nearest to it, so the heatmap and the route colours share one clock.
+ * `cellTimes` holds, per cell, the driving seconds to the closest route point.
+ */
+export function valuesAtEta(corridor: Corridor, layer: Layer, departureMs: number, cellTimes: Float64Array, out: Float32Array): Float32Array {
+  const n = corridor.cells.length
+  const last = corridor.hours.length - 1
+  const start = Date.parse(corridor.hours[0])
+  const data = corridor[layer]
+  for (let i = 0; i < n; i++) {
+    const h = Math.min(last, Math.max(0, Math.round((departureMs + cellTimes[i] * 1000 - start) / 3600_000)))
+    out[i] = data[h * n + i]
+  }
+  return out
+}
+
+/** Driving seconds from the route start to the route vertex nearest each cell. */
+export function cellPassTimes(corridor: Corridor, route: Route): Float64Array {
+  const out = new Float64Array(corridor.cells.length)
+  const step = Math.max(1, Math.floor(route.geometry.length / 400))
+  corridor.cells.forEach((c, i) => {
+    let best = 0
+    let bestD = Infinity
+    for (let j = 0; j < route.geometry.length; j += step) {
+      const [x, y] = route.geometry[j]
+      const d = (x - c.center[0]) ** 2 + (y - c.center[1]) ** 2
+      if (d < bestD) ((bestD = d), (best = j))
+    }
+    out[i] = route.geometry_times_s[best]
+  })
+  return out
 }

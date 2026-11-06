@@ -1,215 +1,242 @@
-import PauseIcon from '@mui/icons-material/Pause'
-import PlayArrowIcon from '@mui/icons-material/PlayArrow'
-import { Box, IconButton, Paper, Stack, Switch, ToggleButton, ToggleButtonGroup, Tooltip, Typography } from '@mui/material'
+import { CalendarCheckIcon, PauseIcon, PlayIcon, Undo2Icon } from 'lucide-react'
 import { useRef, type PointerEvent as ReactPointerEvent } from 'react'
-import type { Plan } from '../api/types'
-import { useForecastHour, usePlaying, type Clock } from '../lib/clock'
-import { LAYERS, type Layer } from '../lib/forecast'
-import { formatTime } from '../lib/format'
-import { RISK_LEVELS } from '../lib/risk'
+import type { Interval, Plan } from '@/api/types'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { useForecastHour, usePlaying, type Clock } from '@/lib/clock'
+import { LAYERS, type Layer } from '@/lib/forecast'
+import { formatTime } from '@/lib/format'
+import { bestWindow, departureOutlook } from '@/lib/plan'
+import { RISK_LEVELS, riskColor } from '@/lib/risk'
+import { cn } from '@/lib/utils'
 
 const HOUR = 3600_000
 
+export type MapClock = 'trip' | 'forecast'
+
 interface Props {
   plan: Plan
+  interval: Interval
   clock: Clock
+  mapClock: MapClock
+  onMapClockChange: (c: MapClock) => void
   departureMs: number
   onDepartureChange: (ms: number) => void
-  /** Selected route's driving time, drawn as the trip span after the pin. */
   tripDurationS: number
   layer: Layer
   onLayerChange: (l: Layer) => void
   showHeatmap: boolean
   onShowHeatmapChange: (on: boolean) => void
+  compact?: boolean
 }
 
 /**
- * One 48 h track, two handles. The round playhead is the forecast clock
- * (heatmap and truck positions). The flag is the departure: dragging it
- * re-times every route. It stops where the longest route would run off the
- * end of the track, so playback always covers the whole trip.
+ * Two lanes on one 48 h scale.
+ * Leave lane: when you set off. Tinted by how bad the safest route is for each departure hour.
+ * Forecast lane: the clock for "Forecast view". Grabbing it or pressing Play switches the map to that hour.
  */
-export function TimelineBar({ plan, clock, departureMs, onDepartureChange, tripDurationS, layer, onLayerChange, showHeatmap, onShowHeatmapChange }: Props) {
+export function TimelineBar(props: Props) {
+  const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, tripDurationS, layer, onLayerChange, showHeatmap, onShowHeatmapChange, compact } = props
   const hour = useForecastHour(clock)
   const playing = usePlaying(clock)
-  const track = useRef<HTMLDivElement>(null)
+  const leaveRef = useRef<HTMLDivElement>(null)
+  const forecastRef = useRef<HTMLDivElement>(null)
   const t = plan.timeline
   const start = Date.parse(t.start)
   const span = Date.parse(t.end) - start
   const pct = (ms: number) => `${Math.min(100, Math.max(0, ((ms - start) / span) * 100))}%`
   const now = Date.parse(t.now)
-  const depMin = Date.parse(t.departure_min)
-  const depMax = Date.parse(t.departure_max)
-  const steps = plan.schedule[10].map((o) => Date.parse(o.departure))
+  const outlook = departureOutlook(plan, interval)
+  const steps = outlook.map((d) => d.departure)
+  const best = bestWindow(plan, interval)
+  // Only suggest a window when leaving at the pin is worse than the best you could do.
+  const currentWorst = outlook.reduce((b, d) => (Math.abs(d.departure - departureMs) < Math.abs(b.departure - departureMs) ? d : b), outlook[0])?.worst ?? 0
   const playMs = start + hour * HOUR
+  const tripEnd = departureMs + tripDurationS * 1000
 
-  function timeAt(clientX: number): number {
-    const r = track.current!.getBoundingClientRect()
+  function timeAt(el: HTMLElement, clientX: number) {
+    const r = el.getBoundingClientRect()
     return start + Math.min(1, Math.max(0, (clientX - r.left) / r.width)) * span
   }
 
-  function dragPlayhead(e: ReactPointerEvent) {
+  function drag(el: HTMLElement | null, e: ReactPointerEvent, move: (ms: number) => void) {
+    if (!el) return
     e.preventDefault()
-    clock.pause()
-    const move = (x: number) => clock.set((timeAt(x) - start) / HOUR)
-    move(e.clientX)
-    const onMove = (ev: PointerEvent) => move(ev.clientX)
+    move(timeAt(el, e.clientX))
+    const onMove = (ev: PointerEvent) => move(timeAt(el, ev.clientX))
     const onUp = () => (window.removeEventListener('pointermove', onMove), window.removeEventListener('pointerup', onUp))
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
 
-  function dragPin(e: ReactPointerEvent) {
-    e.preventDefault()
-    e.stopPropagation()
+  const snap = (ms: number) => steps.reduce((b, s) => (Math.abs(s - ms) < Math.abs(b - ms) ? s : b), steps[0])
+  const setLeave = (ms: number) => {
     clock.pause()
-    const snap = (ms: number) => steps.reduce((b, s) => (Math.abs(s - ms) < Math.abs(b - ms) ? s : b), steps[0])
-    const move = (x: number) => {
-      const ms = snap(timeAt(x))
-      onDepartureChange(ms)
-      clock.set((ms - start) / HOUR) // the forecast follows the pin while you drag it
-    }
-    const onMove = (ev: PointerEvent) => move(ev.clientX)
-    const onUp = () => (window.removeEventListener('pointermove', onMove), window.removeEventListener('pointerup', onUp))
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
+    onDepartureChange(snap(ms))
   }
-
-  function nudgePin(dir: number) {
+  const setForecast = (ms: number) => {
+    clock.pause()
+    onMapClockChange('forecast')
+    clock.set((ms - start) / HOUR)
+  }
+  function nudge(dir: number) {
     const i = steps.findIndex((s) => s >= departureMs - 1)
-    const next = steps[Math.min(steps.length - 1, Math.max(0, i + dir))]
-    onDepartureChange(next)
-    clock.set((next - start) / HOUR)
+    setLeave(steps[Math.min(steps.length - 1, Math.max(0, i + dir))])
   }
-
   function play() {
     if (playing) return clock.pause()
-    const tripEnd = departureMs + tripDurationS * 1000
-    // Replay the trip from the pin unless the playhead is already inside it.
-    if (playMs < departureMs || playMs >= Math.min(tripEnd, start + span) - HOUR) clock.set((departureMs - start) / HOUR)
+    onMapClockChange('forecast')
+    // Replay the trip from departure unless the playhead is already inside it.
+    if (mapClock !== 'forecast' || playMs < departureMs || playMs >= Math.min(tripEnd, start + span) - HOUR) clock.set((departureMs - start) / HOUR)
     clock.play()
   }
 
   const ticks: number[] = []
   for (let ms = Math.ceil(start / (12 * HOUR)) * 12 * HOUR; ms <= start + span; ms += 12 * HOUR) ticks.push(ms)
-  const longRange = Date.parse(t.long_range_after)
+  const stepW = span ? (HOUR / span) * 100 : 0
 
   return (
-    <Paper elevation={8} sx={{ px: 2, pt: 1.25, pb: 1, bgcolor: 'rgba(19,26,32,0.94)', backdropFilter: 'blur(8px)', border: 1, borderColor: 'divider' }}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 0.5 }}>
-        <Tooltip title={playing ? 'Pause' : 'Play the trip from departure'}>
-          <IconButton onClick={play} color="primary" aria-label={playing ? 'Pause forecast' : 'Play forecast'} size="small" sx={{ border: 1, borderColor: 'primary.dark' }}>
-            {playing ? <PauseIcon /> : <PlayArrowIcon />}
-          </IconButton>
-        </Tooltip>
-        <Box sx={{ minWidth: 150 }}>
-          <Typography variant="subtitle2" sx={{ fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 }}>
-            Forecast {formatTime(playMs)}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Leave {formatTime(departureMs)}
-          </Typography>
-        </Box>
-        <Box sx={{ flex: 1 }} />
-        <Switch size="small" checked={showHeatmap} onChange={(e) => onShowHeatmapChange(e.target.checked)} slotProps={{ input: { 'aria-label': 'Show weather layer' } }} />
-        <ToggleButtonGroup size="small" exclusive value={layer} onChange={(_, v) => v && onLayerChange(v)} disabled={!showHeatmap} aria-label="Weather layer">
-          {(Object.keys(LAYERS) as Layer[]).map((k) => (
-            <ToggleButton key={k} value={k} sx={{ px: 1.1, py: 0.25 }}>
-              {LAYERS[k].label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-      </Stack>
-
-      <Box sx={{ position: 'relative', mt: 2.5, mb: 2.75, mx: 1, touchAction: 'none' }}>
-        <Box ref={track} onPointerDown={dragPlayhead} sx={{ position: 'relative', height: 8, borderRadius: 4, bgcolor: 'rgba(255,255,255,0.10)', cursor: 'pointer' }}>
-          {now > start && <Box sx={{ position: 'absolute', left: 0, width: pct(now), top: 0, bottom: 0, borderRadius: '4px 0 0 4px', bgcolor: 'rgba(0,0,0,0.35)' }} />}
-          {longRange < start + span && (
-            <Box
-              title="Long-range forecast"
-              sx={{ position: 'absolute', left: pct(longRange), right: 0, top: 0, bottom: 0, borderRadius: '0 4px 4px 0', background: 'repeating-linear-gradient(45deg, transparent 0 4px, rgba(242,201,76,0.18) 4px 8px)' }}
-            />
-          )}
-          {/* Pin can't go here: the longest route would run past the end of the track. */}
-          <Box sx={{ position: 'absolute', left: pct(depMax), right: 0, top: -3, height: 2, bgcolor: 'rgba(255,255,255,0.15)' }} />
-          <Box sx={{ position: 'absolute', left: pct(departureMs), width: `calc(${pct(departureMs + tripDurationS * 1000)} - ${pct(departureMs)})`, top: 0, bottom: 0, bgcolor: 'rgba(64,224,208,0.45)', borderRadius: 4 }} />
-          <Box sx={{ position: 'absolute', left: 0, width: pct(playMs), top: 0, bottom: 0, borderRadius: 4, borderRight: '2px solid rgba(255,255,255,0.0)' }} />
-        </Box>
-
-        {now >= start && (
-          <Box sx={{ position: 'absolute', left: pct(now), top: -18, transform: 'translateX(-50%)', fontSize: 10, color: 'text.secondary', pointerEvents: 'none' }}>
-            Now
-          </Box>
+    <div className="flex flex-col gap-3 rounded-2xl border bg-popover/95 p-3 shadow-xl backdrop-blur">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button onClick={play} size="sm" variant={playing ? 'secondary' : 'default'}>
+          {playing ? <PauseIcon data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
+          {playing ? 'Pause' : 'Play trip'}
+        </Button>
+        {mapClock === 'trip' ? (
+          <Badge variant="secondary" className="h-6">
+            Map: weather when you get there
+          </Badge>
+        ) : (
+          <>
+            <Badge className="h-6 tabular-nums">Map: forecast {formatTime(playMs)}</Badge>
+            <Button size="sm" variant="ghost" onClick={() => (clock.pause(), onMapClockChange('trip'))}>
+              <Undo2Icon data-icon="inline-start" />
+              Back to my trip
+            </Button>
+          </>
         )}
+        <div className="flex-1" />
+        {best && currentWorst > best.worst && (
+          <Button size="sm" variant="outline" onClick={() => setLeave(best.from)} className="border-risk-low/50">
+            <CalendarCheckIcon data-icon="inline-start" className="text-risk-low" />
+            Best window: {formatTime(best.from)}
+            {best.to > best.from && `–${formatTime(best.to)}`}
+          </Button>
+        )}
+        {!compact && <Layers {...{ layer, onLayerChange, showHeatmap, onShowHeatmapChange }} />}
+      </div>
 
-        <Tooltip title={`Departure · drag to leave earlier or later (${formatTime(depMin)} – ${formatTime(depMax)})`} placement="top">
-          <Box
+      <div className="grid grid-cols-[4.5rem_1fr] items-center gap-x-3 gap-y-2 text-xs">
+        <span className="text-muted-foreground">Leave</span>
+        <div ref={leaveRef} className="relative h-7 cursor-pointer touch-none" onPointerDown={(e) => drag(leaveRef.current, e, setLeave)}>
+          {/* Each departure hour, tinted by the safest route's worst level if you left then. */}
+          <div className="absolute inset-y-2 right-0 left-0 overflow-hidden rounded-full bg-muted">
+            {outlook.map((d) => (
+              <div key={d.departure} className="absolute inset-y-0" style={{ left: pct(d.departure), width: `${stepW}%`, background: riskColor(d.worst), opacity: 0.55 }} />
+            ))}
+          </div>
+          {now > start && <div className="absolute inset-y-1 left-0 rounded-l-full bg-background/60" style={{ width: pct(now) }} aria-hidden />}
+          <div
             role="slider"
             tabIndex={0}
             aria-label="Departure time"
-            aria-valuemin={depMin}
-            aria-valuemax={depMax}
+            aria-valuemin={steps[0]}
+            aria-valuemax={steps[steps.length - 1]}
             aria-valuenow={departureMs}
             aria-valuetext={`Leave ${formatTime(departureMs)}`}
-            onPointerDown={dragPin}
-            onKeyDown={(e) => (e.key === 'ArrowLeft' ? nudgePin(-1) : e.key === 'ArrowRight' ? nudgePin(1) : null)}
-            sx={{ position: 'absolute', left: pct(departureMs), top: -20, transform: 'translateX(-50%)', cursor: 'ew-resize', display: 'flex', flexDirection: 'column', alignItems: 'center', '&:focus-visible': { outline: '2px solid #40E0D0', borderRadius: 1 } }}
+            onKeyDown={(e) => (e.key === 'ArrowLeft' ? nudge(-1) : e.key === 'ArrowRight' ? nudge(1) : null)}
+            className="absolute top-1/2 flex -translate-x-1/2 -translate-y-1/2 cursor-ew-resize items-center gap-1 rounded-full border-2 border-background bg-primary px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap text-primary-foreground shadow-md outline-none focus-visible:ring-3 focus-visible:ring-ring/60"
+            style={{ left: pct(departureMs) }}
           >
-            <Box sx={{ px: 0.75, height: 16, borderRadius: 1, bgcolor: '#40E0D0', color: '#043344', fontSize: 10, fontWeight: 700, lineHeight: '16px', whiteSpace: 'nowrap' }}>Leave</Box>
-            <Box sx={{ width: 2, height: 16, bgcolor: '#40E0D0' }} />
-          </Box>
-        </Tooltip>
+            {formatTime(departureMs)}
+          </div>
+        </div>
 
-        <Box
-          role="slider"
-          tabIndex={0}
-          aria-label="Forecast time"
-          aria-valuemin={0}
-          aria-valuemax={48}
-          aria-valuenow={Math.round(hour)}
-          aria-valuetext={`Forecast ${formatTime(playMs)}`}
-          onPointerDown={dragPlayhead}
-          onKeyDown={(e) => (e.key === 'ArrowLeft' ? clock.set(Math.round(hour) - 1) : e.key === 'ArrowRight' ? clock.set(Math.round(hour) + 1) : null)}
-          sx={{ position: 'absolute', left: pct(playMs), top: -5, width: 18, height: 18, ml: '-9px', borderRadius: '50%', bgcolor: '#E8EEF2', border: '3px solid #043344', boxShadow: '0 0 0 1px #40E0D0', cursor: 'grab', '&:focus-visible': { outline: '2px solid #40E0D0' } }}
-        />
+        <span className="text-muted-foreground">Forecast</span>
+        <div ref={forecastRef} className="relative h-7 cursor-pointer touch-none" onPointerDown={(e) => drag(forecastRef.current, e, setForecast)}>
+          <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-muted" />
+          {/* The trip itself, from the Leave pin to arrival on the selected route. */}
+          <div className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-primary/50" style={{ left: pct(departureMs), width: `calc(${pct(tripEnd)} - ${pct(departureMs)})` }} />
+          <div
+            className="absolute inset-y-0 right-0 rounded-r-full bg-[repeating-linear-gradient(45deg,transparent_0_4px,rgba(242,201,76,0.18)_4px_8px)]"
+            style={{ left: pct(Date.parse(t.long_range_after)) }}
+            title="Long-range forecast"
+          />
+          <div
+            role="slider"
+            tabIndex={0}
+            aria-label="Forecast time"
+            aria-valuemin={0}
+            aria-valuemax={48}
+            aria-valuenow={Math.round(hour)}
+            aria-valuetext={`Forecast ${formatTime(playMs)}`}
+            onKeyDown={(e) => (e.key === 'ArrowLeft' ? setForecast(playMs - HOUR) : e.key === 'ArrowRight' ? setForecast(playMs + HOUR) : null)}
+            className={cn(
+              'absolute top-1/2 size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow outline-none focus-visible:ring-3 focus-visible:ring-ring/60',
+              mapClock === 'forecast' ? 'border-primary bg-foreground' : 'border-muted-foreground bg-muted',
+            )}
+            style={{ left: pct(playMs) }}
+          />
+        </div>
 
-        {ticks.map((ms) => (
-          <Box key={ms} sx={{ position: 'absolute', left: pct(ms), top: 14, transform: 'translateX(-50%)', fontSize: 10, color: 'text.secondary', whiteSpace: 'nowrap', pointerEvents: 'none' }}>
-            {formatTime(ms)}
-          </Box>
-        ))}
-      </Box>
+        <span />
+        <div className="relative h-4 text-[11px] text-muted-foreground">
+          {now >= start && (
+            <span className="absolute -translate-x-1/2 font-semibold text-foreground" style={{ left: pct(now) }}>
+              Now
+            </span>
+          )}
+          {ticks.map((ms) => (
+            <span key={ms} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: pct(ms) }}>
+              {formatTime(ms)}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {compact && <Layers {...{ layer, onLayerChange, showHeatmap, onShowHeatmapChange }} />}
       <Legend layer={layer} />
-    </Paper>
+    </div>
+  )
+}
+
+function Layers({ layer, onLayerChange, showHeatmap, onShowHeatmapChange }: Pick<Props, 'layer' | 'onLayerChange' | 'showHeatmap' | 'onShowHeatmapChange'>) {
+  return (
+    <div className="flex items-center gap-2">
+      <Switch checked={showHeatmap} onCheckedChange={onShowHeatmapChange} aria-label="Show weather layer" />
+      <ToggleGroup type="single" size="sm" variant="outline" value={layer} onValueChange={(v) => v && onLayerChange(v as Layer)} disabled={!showHeatmap} aria-label="Weather layer">
+        {(Object.keys(LAYERS) as Layer[]).map((k) => (
+          <ToggleGroupItem key={k} value={k} className="px-2.5 text-xs">
+            {LAYERS[k].label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+    </div>
   )
 }
 
 function Legend({ layer }: { layer: Layer }) {
   if (layer === 'risk') {
     return (
-      <Stack direction="row" spacing={1.5} sx={{ flexWrap: 'wrap' }}>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
         {RISK_LEVELS.map((r) => (
-          <Stack key={r.key} direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
-            <Box sx={{ width: 10, height: 10, borderRadius: '2px', bgcolor: r.color }} />
-            <Typography variant="caption" color="text.secondary">
-              {r.label}
-            </Typography>
-          </Stack>
+          <span key={r.key} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="size-2.5 rounded-sm" style={{ background: r.color }} />
+            {r.label}
+          </span>
         ))}
-      </Stack>
+      </div>
     )
   }
   const { stops, unit } = LAYERS[layer]
   const gradient = stops.map(([v, c]) => `${c} ${(v / stops[stops.length - 1][0]) * 100}%`).join(', ')
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-      <Typography variant="caption" color="text.secondary">
-        {stops[0][0]}
-      </Typography>
-      <Box sx={{ flex: 1, maxWidth: 280, height: 8, borderRadius: 1, background: `linear-gradient(90deg, ${gradient})`, border: 1, borderColor: 'divider' }} />
-      <Typography variant="caption" color="text.secondary">
-        {stops[stops.length - 1][0]}+ {unit}
-      </Typography>
-    </Stack>
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      {stops[0][0]}
+      <span className="h-2 max-w-72 flex-1 rounded-full border" style={{ background: `linear-gradient(90deg, ${gradient})` }} />
+      {stops[stops.length - 1][0]}+ {unit}
+    </div>
   )
 }

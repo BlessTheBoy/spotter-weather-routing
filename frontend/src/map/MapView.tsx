@@ -3,12 +3,12 @@ import { AttributionControl, LngLatBounds, Map as MapLibre, NavigationControl, P
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { useEffect, useRef } from 'react'
-import type { Interval, Plan } from '../api/types'
-import type { Clock } from '../lib/clock'
-import type { CameraTarget } from '../lib/navigation'
-import { hourToTime, LAYERS, positionAt, valuesAt, type Layer } from '../lib/forecast'
-import { routeStates, type CheckpointState } from '../lib/plan'
-import { RISK_LEVELS, UNKNOWN_COLOR } from '../lib/risk'
+import type { Interval, Plan } from '@/api/types'
+import type { Clock } from '@/lib/clock'
+import type { CameraTarget } from '@/lib/navigation'
+import { cellPassTimes, hourToTime, LAYERS, positionAt, valuesAt, valuesAtEta, type Layer } from '@/lib/forecast'
+import { routeStates, routeStatesAtTime, type CheckpointState } from '@/lib/plan'
+import { RISK_LEVELS, UNKNOWN_COLOR } from '@/lib/risk'
 import { loadBadgeImages } from './badges'
 import { badgeFeatures, boundsOf, checkpointFeatures, corridorFeatures, endpoints, riskSegments, routeLines } from './geojson'
 import { checkpointPopupHtml } from './popup'
@@ -53,6 +53,8 @@ const COLUMN_HEIGHT_M = 30_000
 const RISK_LINE_COLOR = ['match', ['get', 'level'], ...RISK_LEVELS.flatMap((r) => [r.level, r.color]), UNKNOWN_COLOR] as unknown as ExpressionSpecification
 
 export type MapMode = 'plan' | 'compare' | 'navigate'
+/** Which single clock the map shows: weather when the truck gets there, or at the forecast slider's hour. */
+export type MapClock = 'trip' | 'forecast'
 
 /** Navigation progress: the risk line is drawn only ahead of this mile. */
 export interface Follow {
@@ -76,6 +78,7 @@ interface Props {
   showHeatmap: boolean
   is3D: boolean
   clock: Clock
+  mapClock: MapClock
   hoveredCheckpoint: number | null
   onHoverCheckpoint: (index: number | null) => void
   follow: Follow | null
@@ -86,7 +89,7 @@ interface Props {
 }
 
 export function MapView(props: Props) {
-  const { plan, mode, interval, departureMs, selectedRouteId, layer, showHeatmap, is3D, clock, hoveredCheckpoint, follow, camera } = props
+  const { plan, mode, interval, departureMs, selectedRouteId, layer, showHeatmap, is3D, clock, mapClock, hoveredCheckpoint, follow, camera } = props
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibre | null>(null)
   const readyRef = useRef<Promise<void> | null>(null)
@@ -94,6 +97,8 @@ export function MapView(props: Props) {
   const corridorData = useRef<ReturnType<typeof corridorFeatures> | null>(null)
   const columnKey = useRef('')
   const statesRef = useRef<CheckpointState[]>([])
+  const passTimes = useRef<{ key: string; times: Float64Array } | null>(null)
+  const forecastHourKey = useRef<number | null>(null)
   const latest = useRef(props)
   latest.current = props
 
@@ -162,30 +167,56 @@ export function MapView(props: Props) {
         for (const id of ['segments', 'checkpoints', 'badges'] as const) set(map, id, EMPTY)
         return
       }
-      const states = routeStates(plan, route, interval, departureMs)
-      statesRef.current = states
-      // While navigating only the road ahead keeps its colour.
-      set(map, 'segments', riskSegments(route, states, mode === 'navigate' ? mileStep : 0))
-      set(map, 'checkpoints', checkpointFeatures(route, states))
-      set(map, 'badges', badgeFeatures(states))
       map.setPaintProperty('route-alt', 'line-opacity', ['case', ['==', ['get', 'route'], selectedRouteId ?? ''], 0, 0.9])
+      forecastHourKey.current = null
+      drawRoute(map)
       paintHour()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, selectedRouteId, interval, departureMs, mode, mileStep])
+  }, [plan, selectedRouteId, interval, departureMs, mode, mileStep, mapClock])
+
+  /** Risk line, dots and badges of the selected route under the active clock. */
+  function drawRoute(map: MapLibre) {
+    const { plan, selectedRouteId, interval, departureMs, mode, mapClock } = latest.current
+    const route = plan?.routes.find((r) => r.id === selectedRouteId)
+    if (!plan || !route) return
+    const states =
+      mapClock === 'forecast' && mode === 'compare'
+        ? routeStatesAtTime(plan, route, interval, departureMs, hourToTime(plan.corridor, Math.round(clock.get())))
+        : routeStates(plan, route, interval, departureMs)
+    statesRef.current = states
+    // While navigating only the road ahead keeps its colour.
+    set(map, 'segments', riskSegments(route, states, mode === 'navigate' ? mileStep : 0))
+    set(map, 'checkpoints', checkpointFeatures(route, states))
+    set(map, 'badges', badgeFeatures(states))
+  }
 
   // --- forecast hour -> heatmap colours and truck positions ----------------
   function paintHour() {
     const map = mapRef.current
-    const { plan, layer, is3D, departureMs, mode, selectedRouteId } = latest.current
+    const { plan, layer, is3D, departureMs, mode, selectedRouteId, mapClock } = latest.current
     if (!map || !plan || !map.getSource('corridor')) return
     const hour = clock.get()
     const n = plan.corridor.cells.length
     if (values.current.length !== n) values.current = new Float32Array(n)
-    valuesAt(plan.corridor, layer, hour, values.current)
+    const route = plan.routes.find((r) => r.id === selectedRouteId)
+    if (mapClock === 'trip' && route) {
+      // Trip view: each hex at the hour the selected truck passes it.
+      const key = `${plan.generated_at}:${route.id}`
+      if (passTimes.current?.key !== key) passTimes.current = { key, times: cellPassTimes(plan.corridor, route) }
+      valuesAtEta(plan.corridor, layer, departureMs, passTimes.current.times, values.current)
+    } else {
+      valuesAt(plan.corridor, layer, hour, values.current)
+      // Forecast view: the route line follows the slider too, redrawn once per hour step.
+      const h = Math.round(hour)
+      if (mode === 'compare' && forecastHourKey.current !== h) {
+        forecastHourKey.current = h
+        drawRoute(map)
+      }
+    }
     for (let i = 0; i < n; i++) map.setFeatureState({ source: 'corridor', id: i }, { v: values.current[i] })
     if (is3D) paintColumns(map, n, layer)
-    if (mode === 'compare') {
+    if (mode === 'compare' && mapClock === 'forecast') {
       const t = hourToTime(plan.corridor, hour)
       const trucks = plan.routes
         .map((r) => ({ r, p: positionAt(r, departureMs, t) }))
@@ -302,10 +333,12 @@ export function MapView(props: Props) {
     const map = mapRef.current
     const route = plan?.routes.find((r) => r.id === selectedRouteId)
     if (!map || !plan || !route || hoveredCheckpoint == null || !map.getSource('checkpoints')) return
-    const s = routeStates(plan, route, interval, departureMs)[hoveredCheckpoint]
+    const s = statesRef.current[hoveredCheckpoint]
     if (!s) return
     map.setFeatureState({ source: 'checkpoints', id: hoveredCheckpoint }, { hover: true })
-    const popup = new Popup({ closeButton: false, closeOnClick: false, className: 'cp-popup', offset: 14, maxWidth: '260px' })
+    // Open downwards near the top so the timeline card never hides it.
+    const y = map.project([s.lng, s.lat]).y
+    const popup = new Popup({ closeButton: false, closeOnClick: false, className: 'cp-popup', offset: 16, maxWidth: '260px', anchor: y < map.getContainer().clientHeight * 0.45 ? 'top' : 'bottom' })
       .setLngLat([s.lng, s.lat])
       .setHTML(checkpointPopupHtml(route, s, plan.load_lb))
       .addTo(map)
@@ -313,7 +346,7 @@ export function MapView(props: Props) {
       map.setFeatureState({ source: 'checkpoints', id: hoveredCheckpoint }, { hover: false })
       popup.remove()
     }
-  }, [hoveredCheckpoint, plan, selectedRouteId, interval, departureMs])
+  }, [hoveredCheckpoint, plan, selectedRouteId, interval, departureMs, mapClock])
 
   return <div ref={container} style={{ position: 'absolute', inset: 0 }} />
 }
@@ -360,17 +393,15 @@ function addLayers(map: MapLibre) {
   map.addLayer({ id: 'route-hit', type: 'line', source: 'routes', paint: { 'line-color': '#000', 'line-opacity': 0, 'line-width': 20 } })
   map.addLayer({ id: 'segments-casing', type: 'line', source: 'segments', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#0b1a22', 'line-width': 10 } })
   map.addLayer({ id: 'segments', type: 'line', source: 'segments', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': RISK_LINE_COLOR, 'line-width': 6 } })
-  map.addLayer({
-    id: 'checkpoints',
-    type: 'circle',
-    source: 'checkpoints',
-    paint: {
+  // Low-risk dots only appear once zoomed in, so long trips don't turn into a solid chain.
+  const dotPaint = {
       'circle-color': RISK_LINE_COLOR,
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, ['case', ['boolean', ['feature-state', 'hover'], false], 8, 3.5], 9, ['case', ['boolean', ['feature-state', 'hover'], false], 11, 6]],
       'circle-stroke-color': ['case', ['boolean', ['feature-state', 'hover'], false], '#ffffff', '#0b1a22'],
       'circle-stroke-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.5, 1.5],
-    },
-  })
+  } as const
+  map.addLayer({ id: 'checkpoints-low', type: 'circle', source: 'checkpoints', minzoom: 7.5, filter: ['==', ['get', 'level'], 0], paint: dotPaint as never })
+  map.addLayer({ id: 'checkpoints', type: 'circle', source: 'checkpoints', filter: ['!=', ['get', 'level'], 0], paint: dotPaint as never })
   map.addLayer({
     id: 'endpoints',
     type: 'circle',
@@ -436,21 +467,21 @@ function bindInteractions(map: MapLibre, latest: { current: Props }) {
     const id = e.features?.[0]?.properties?.route
     if (id && latest.current.mode === 'compare') latest.current.onSelectRoute(id)
   })
-  map.on('mousemove', 'checkpoints', (e) => {
-    const f = e.features?.[0]
-    if (!f) return
-    map.getCanvas().style.cursor = 'pointer'
-    const index = (f.properties as { index: number }).index
-    if (latest.current.hoveredCheckpoint !== index) latest.current.onHoverCheckpoint(index)
-  })
-  map.on('mouseleave', 'checkpoints', () => {
-    map.getCanvas().style.cursor = ''
-    latest.current.onHoverCheckpoint(null)
-  })
-  map.on('click', 'badges', (e) => {
-    const index = e.features?.[0]?.properties?.index
-    if (index != null) latest.current.onHoverCheckpoint(Number(index))
-  })
+  // Dots and the badges above them open the same popup, on hover or tap.
+  for (const layer of ['checkpoints', 'checkpoints-low', 'badges']) {
+    const show = (e: { features?: { properties: Record<string, unknown> }[] }) => {
+      const index = e.features?.[0]?.properties?.index
+      if (index == null) return
+      map.getCanvas().style.cursor = 'pointer'
+      if (latest.current.hoveredCheckpoint !== Number(index)) latest.current.onHoverCheckpoint(Number(index))
+    }
+    map.on('mousemove', layer, show)
+    map.on('click', layer, show)
+    map.on('mouseleave', layer, () => {
+      map.getCanvas().style.cursor = ''
+      latest.current.onHoverCheckpoint(null)
+    })
+  }
   map.on('mouseenter', 'route-hit', () => (map.getCanvas().style.cursor = 'pointer'))
   map.on('mouseleave', 'route-hit', () => (map.getCanvas().style.cursor = ''))
 }

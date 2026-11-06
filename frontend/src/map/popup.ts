@@ -1,7 +1,7 @@
-import type { Route } from '../api/types'
-import { formatTime } from '../lib/format'
-import type { CheckpointState } from '../lib/plan'
-import { RISK_LEVELS, riskColor, riskLabel } from '../lib/risk'
+import type { Route } from '@/api/types'
+import { formatTime } from '@/lib/format'
+import type { CheckpointState } from '@/lib/plan'
+import { RISK_LEVELS, riskColor, riskLabel } from '@/lib/risk'
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 

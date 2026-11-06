@@ -1,13 +1,11 @@
-import { Box, Tooltip } from '@mui/material'
-import type { Route } from '../api/types'
-import { formatTime } from '../lib/format'
-import type { CheckpointState } from '../lib/plan'
-import { riskColor, riskLabel } from '../lib/risk'
+import type { Route } from '@/api/types'
+import { formatTime } from '@/lib/format'
+import type { CheckpointState } from '@/lib/plan'
+import { riskColor, riskLabel } from '@/lib/risk'
 
 interface Props {
   route: Route
   states: CheckpointState[]
-  height?: number
   hoveredIndex?: number | null
   onHover?: (index: number | null) => void
   showTicks?: boolean
@@ -15,30 +13,31 @@ interface Props {
 
 /**
  * The route laid out by distance, each checkpoint's stretch coloured by its
- * risk at the truck's ETA. Hovering a stretch highlights it on the map.
+ * risk. Hovering a stretch opens that checkpoint's popup on the map.
  */
-export function RiskStrip({ route, states, height = 10, hoveredIndex, onHover, showTicks }: Props) {
+export function RiskStrip({ route, states, hoveredIndex, onHover, showTicks }: Props) {
   const total = route.distance_mi || 1
   return (
-    <Box>
-      <Box sx={{ display: 'flex', height, borderRadius: 1, overflow: 'hidden', bgcolor: 'rgba(255,255,255,0.05)' }} onMouseLeave={() => onHover?.(null)}>
+    <div>
+      <div className="flex h-2.5 overflow-hidden rounded-full bg-muted" onMouseLeave={() => onHover?.(null)} role="list" aria-label="Risk along the route">
         {states.map((cp) => (
-          <Tooltip key={cp.index} disableInteractive placement="top" title={onHover ? `Mile ${cp.mile.toFixed(0)} · ${riskLabel(cp.level)} · ETA ${formatTime(cp.eta)}` : ''}>
-            <Box
-              onMouseEnter={() => onHover?.(cp.index)}
-              sx={{
-                width: `${(cp.represents_mi / total) * 100}%`,
-                bgcolor: riskColor(cp.level),
-                opacity: hoveredIndex == null || hoveredIndex === cp.index ? 1 : 0.5,
-                transition: 'opacity 120ms, background-color 200ms',
-                cursor: onHover ? 'pointer' : 'default',
-              }}
-            />
-          </Tooltip>
+          <div
+            key={cp.index}
+            role="listitem"
+            aria-label={`Mile ${cp.mile.toFixed(0)}, ${riskLabel(cp.level)}, ETA ${formatTime(cp.eta)}`}
+            onMouseEnter={() => onHover?.(cp.index)}
+            onClick={() => onHover?.(cp.index)}
+            className="h-full cursor-pointer transition-opacity"
+            style={{
+              width: `${(cp.represents_mi / total) * 100}%`,
+              background: riskColor(cp.level),
+              opacity: hoveredIndex == null || hoveredIndex === cp.index ? 1 : 0.45,
+            }}
+          />
         ))}
-      </Box>
+      </div>
       {showTicks && <Ticks route={route} states={states} />}
-    </Box>
+    </div>
   )
 }
 
@@ -49,24 +48,22 @@ function Ticks({ route, states }: { route: Route; states: CheckpointState[] }) {
     return states.reduce((best, cp) => (Math.abs(cp.mile - target) < Math.abs(best.mile - target) ? cp : best))
   })
   return (
-    <Box sx={{ position: 'relative', height: 30, mt: 0.5, fontSize: 11, color: 'text.secondary' }}>
+    <div className="relative mt-1 h-7 text-[11px] leading-tight text-muted-foreground">
       {picks.map((cp, i) => (
-        <Box
+        <div
           key={i}
-          sx={{
-            position: 'absolute',
+          className="absolute whitespace-nowrap"
+          style={{
             left: `${(cp.mile / (route.distance_mi || 1)) * 100}%`,
             transform: i === 0 ? 'none' : i === 3 ? 'translateX(-100%)' : 'translateX(-50%)',
             textAlign: i === 0 ? 'left' : i === 3 ? 'right' : 'center',
-            whiteSpace: 'nowrap',
-            lineHeight: 1.3,
           }}
         >
           {cp.mile.toFixed(0)} mi
           <br />
           {formatTime(cp.eta)}
-        </Box>
+        </div>
       ))}
-    </Box>
+    </div>
   )
 }

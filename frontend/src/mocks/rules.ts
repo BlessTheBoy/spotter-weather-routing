@@ -1,7 +1,7 @@
 // Mock-only mirror of backend/planner/domain/{risk,recommend}.py so the UX can
 // be exercised with synthetic weather. The graded logic lives in Django; keep
 // these in step with it (same half-open bands, same ranking order).
-import type { Criterion, Level, Recommendation, RouteSummary } from '../api/types'
+import type { Criterion, Level, Recommendation, RouteSummary } from '@/api/types'
 
 export function windLevel(mph: number): Level {
   return mph >= 55 ? 4 : mph >= 45 ? 3 : mph >= 35 ? 2 : mph >= 25 ? 1 : 0

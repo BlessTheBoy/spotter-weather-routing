@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Corridor, Route } from '../api/types'
+import type { Corridor, Route } from '@/api/types'
 import { positionAt, valuesAt } from './forecast'
 
 const corridor = {

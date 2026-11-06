@@ -1,7 +1,7 @@
 // Mock backend for UX work (VITE_API_MOCK=1): recorded routes plus a chosen
 // weather scenario, built into a v2 Plan in the browser. Loaded lazily so
 // fixtures never ship in a real build.
-import type { Place, Plan, PlanRequest } from '../api/types'
+import type { Place, Plan, PlanRequest } from '@/api/types'
 import { buildPlan, type Fixture } from './buildPlan'
 import type { ScenarioId } from './scenarios'
 

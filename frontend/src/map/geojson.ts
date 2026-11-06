@@ -1,6 +1,6 @@
 import type { Feature, FeatureCollection, LineString, Point, Polygon } from 'geojson'
-import type { Corridor, LngLat, Plan, Route } from '../api/types'
-import { badgeOf, type CheckpointState } from '../lib/plan'
+import type { Corridor, LngLat, Plan, Route } from '@/api/types'
+import { badgeOf, type CheckpointState } from '@/lib/plan'
 
 const EARTH_RADIUS_MI = 3958.7613
 

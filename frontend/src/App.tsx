@@ -1,22 +1,21 @@
-import ThreeDRotationIcon from '@mui/icons-material/ThreeDRotation'
-import { Box, Paper, Stack, ToggleButton, ToggleButtonGroup, Typography, useMediaQuery } from '@mui/material'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchPlan } from './api/client'
-import type { Interval, Place, Plan } from './api/types'
-import { BottomSheet, type SheetSnap } from './components/BottomSheet'
-import { ComparePanel } from './components/ComparePanel'
-import { NavigateOverlay } from './components/NavigateOverlay'
-import { PlanPanel, type TripDraft } from './components/PlanPanel'
-import { TimelineBar } from './components/TimelineBar'
-import { createClock } from './lib/clock'
-import type { Layer } from './lib/forecast'
-import { toLocalInput } from './lib/format'
-import { requestCompass, useNavigation } from './lib/navigation'
-import { routeStates } from './lib/plan'
-import { MapView, type MapMode } from './map/MapView'
+import { fetchPlan } from '@/api/client'
+import type { Interval, Place, Plan } from '@/api/types'
+import { BottomSheet, type SheetSnap } from '@/components/BottomSheet'
+import { ComparePanel } from '@/components/ComparePanel'
+import { NavigateOverlay } from '@/components/NavigateOverlay'
+import { PlanPanel, type TripDraft } from '@/components/PlanPanel'
+import { TimelineBar } from '@/components/TimelineBar'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { createClock } from '@/lib/clock'
+import type { Layer } from '@/lib/forecast'
+import { requestCompass, useNavigation } from '@/lib/navigation'
+import { routeStates } from '@/lib/plan'
+import { useMediaQuery } from '@/lib/useMediaQuery'
+import { MapView, type MapClock, type MapMode } from '@/map/MapView'
 
 const MOCK = import.meta.env.VITE_API_MOCK === '1'
-const ScenarioSwitcher = lazy(() => import('./components/ScenarioSwitcher').then((m) => ({ default: m.ScenarioSwitcher })))
+const ScenarioSwitcher = lazy(() => import('@/components/ScenarioSwitcher').then((m) => ({ default: m.ScenarioSwitcher })))
 
 const INTERVAL_KEY = 'checkpoint-interval'
 const HOUR = 3600_000
@@ -34,14 +33,16 @@ const DEFAULT_DRAFT: TripDraft = {
   origin: { label: 'Charlotte, North Carolina, US', lat: 35.2272, lng: -80.8431 },
   destination: { label: 'New York, New York, US', lat: 40.7128, lng: -74.006 },
   stops: [],
-  departure: toLocalInput(new Date(Date.now() + 2 * HOUR)),
+  departure: new Date(Math.ceil((Date.now() + 2 * HOUR) / (15 * 60_000)) * 15 * 60_000),
   load: '42000',
 }
 
 export default function App() {
-  const desktop = useMediaQuery('(min-width:900px)')
+  const desktop = useMediaQuery('(min-width: 900px)')
   const clock = useMemo(() => createClock(48), [])
   const [mode, setMode] = useState<MapMode>('plan')
+  const [mapClock, setMapClock] = useState<MapClock>('trip')
+  const [navPreview, setNavPreview] = useState(false)
   const [draft, setDraft] = useState<TripDraft>(DEFAULT_DRAFT)
   const [interval, setIntervalState] = useState<Interval>(storedInterval)
   const [plan, setPlan] = useState<Plan | null>(null)
@@ -53,11 +54,12 @@ export default function App() {
   const [layer, setLayer] = useState<Layer>('risk')
   const [showHeatmap, setShowHeatmap] = useState(true)
   const [is3D, setIs3D] = useState(false)
-  const [sheet, setSheet] = useState<SheetSnap>('half')
+  const [sheet, setSheet] = useState<SheetSnap>('initial')
+  const [sheetH, setSheetH] = useState(320)
   const inflight = useRef<AbortController | null>(null)
 
   const route = plan?.routes.find((r) => r.id === selectedRouteId) ?? null
-  const nav = useNavigation(route, mode === 'navigate')
+  const nav = useNavigation(route, mode === 'navigate', navPreview)
   const states = useMemo(() => (plan && route ? routeStates(plan, route, interval, departureMs) : []), [plan, route, interval, departureMs])
 
   function setInterval(i: Interval) {
@@ -70,6 +72,12 @@ export default function App() {
     }
   }
 
+  // A pin moved in Compare is the trip's departure from then on, including after Edit.
+  function changeDeparture(ms: number) {
+    setDepartureMs(ms)
+    setDraft((d) => ({ ...d, departure: new Date(ms) }))
+  }
+
   async function submit() {
     inflight.current?.abort()
     const ctrl = new AbortController()
@@ -78,23 +86,33 @@ export default function App() {
     setError(null)
     try {
       const next = await fetchPlan(
-        { origin: draft.origin!, destination: draft.destination!, stops: draft.stops as Place[], departure: new Date(draft.departure).toISOString(), load_lb: Number(draft.load) },
+        { origin: draft.origin!, destination: draft.destination!, stops: draft.stops as Place[], departure: draft.departure.toISOString(), load_lb: Number(draft.load) },
         ctrl.signal,
       )
       const dep = Date.parse(next.timeline.departure)
       clock.pause()
       clock.set((dep - Date.parse(next.timeline.start)) / HOUR)
       setDepartureMs(dep)
+      setMapClock('trip')
       setHovered(null)
       setSelectedRouteId(next.schedule[interval].find((o) => Date.parse(o.departure) === dep)?.recommendation.route_id ?? next.routes[0].id)
       setPlan(next)
       setMode('compare')
-      setSheet('half')
+      setSheet('initial')
     } catch (e) {
       if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
       if (inflight.current === ctrl) setLoading(false)
     }
+  }
+
+  function start(kind: 'live' | 'preview') {
+    // Ask for the compass inside the click: iOS only allows it from a user gesture.
+    if (kind === 'live') void requestCompass()
+    clock.pause()
+    setHovered(null)
+    setNavPreview(kind === 'preview')
+    setMode('navigate')
   }
 
   // Esc leaves navigation.
@@ -114,50 +132,44 @@ export default function App() {
         interval={interval}
         onIntervalChange={setInterval}
         departureMs={departureMs}
+        onDepartureChange={changeDeparture}
         selectedRouteId={route.id}
         onSelectRoute={(id) => (setSelectedRouteId(id), setHovered(null))}
+        states={states}
         hoveredCheckpoint={hovered}
         onHoverCheckpoint={setHovered}
         onEdit={() => setMode('plan')}
-        onStart={() => {
-          // Ask for the compass inside the click: iOS only allows it from a user gesture.
-          void requestCompass()
-          clock.pause()
-          setHovered(null)
-          setMode('navigate')
-        }}
+        onStart={start}
       />
     )
 
   const header = (
-    <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mb: 2 }}>
-      <Box component="img" src="/favicon.svg" alt="" sx={{ width: 28, height: 28 }} />
-      <Box>
-        <Typography variant="h1">Weather-Aware Truck Routing</Typography>
-        <Typography variant="caption" color="text.secondary">
-          Forecast at your ETA, ranked by risk
-        </Typography>
-      </Box>
-    </Stack>
+    <div className="mb-4 flex items-center gap-2.5">
+      <img src="/favicon.svg" alt="" className="size-7" />
+      <div>
+        <h1 className="text-base leading-tight font-semibold">Weather-Aware Truck Routing</h1>
+        <p className="text-xs text-muted-foreground">Forecast at your ETA, ranked by risk</p>
+      </div>
+    </div>
   )
 
-  // Keep the routes inside the part of the map that isn't covered by the panel, timeline or sheet.
-  const vh = typeof window === 'undefined' ? 800 : window.innerHeight
+  // Keep the routes inside the part of the map not covered by the panel, timeline or sheet.
+  const timelineOnMap = mode === 'compare' && plan && route
   const mapPadding = desktop
-    ? { top: 80, bottom: 220, left: 60, right: 60 }
-    : { top: mode === 'compare' ? 250 : 70, bottom: sheet === 'peek' ? 150 : Math.round(vh * 0.52) + 16, left: 24, right: 24 }
+    ? { top: timelineOnMap ? 250 : 60, bottom: 40, left: 60, right: 60 }
+    : { top: timelineOnMap ? 240 : 60, bottom: sheet === 'peek' ? 140 : sheetH + 16, left: 24, right: 24 }
   const navigating = mode === 'navigate' && plan && route && nav.state
 
   return (
-    <Box sx={{ display: 'flex', height: '100%', bgcolor: 'background.default' }}>
+    <div className="flex h-full bg-background">
       {desktop && mode !== 'navigate' && (
-        <Box component="aside" sx={{ width: 400, flexShrink: 0, height: '100%', overflowY: 'auto', borderRight: 1, borderColor: 'divider', p: 2.5, display: 'flex', flexDirection: 'column' }}>
+        <aside className="flex h-full w-[400px] shrink-0 flex-col overflow-y-auto border-r p-5">
           {header}
-          <Box sx={{ flex: 1 }}>{panel}</Box>
-        </Box>
+          <div className="flex-1">{panel}</div>
+        </aside>
       )}
 
-      <Box component="main" sx={{ position: 'relative', flex: 1, minWidth: 0 }}>
+      <main className="relative min-w-0 flex-1">
         <MapView
           plan={plan}
           mode={mode}
@@ -169,6 +181,7 @@ export default function App() {
           showHeatmap={showHeatmap}
           is3D={is3D}
           clock={clock}
+          mapClock={mapClock}
           hoveredCheckpoint={mode === 'compare' ? hovered : null}
           onHoverCheckpoint={setHovered}
           follow={navigating ? { mile: nav.state!.mile } : null}
@@ -177,54 +190,65 @@ export default function App() {
         />
 
         {mode !== 'navigate' && (
-          <Stack direction="row" spacing={1} sx={{ position: 'absolute', top: 12, left: 12, zIndex: 2 }}>
-            {mode === 'compare' && (
-              <Paper elevation={6} sx={{ bgcolor: 'rgba(19,26,32,0.92)' }}>
-                <ToggleButtonGroup size="small" exclusive value={is3D ? '3d' : '2d'} onChange={(_, v) => v && setIs3D(v === '3d')} aria-label="Map view">
-                  <ToggleButton value="2d" sx={{ px: 1.5 }}>
+          <div className="absolute top-3 left-3 z-20 flex flex-col items-start gap-2">
+            {timelineOnMap && (
+              <div className={desktop ? 'w-[min(880px,calc(100vw-400px-5rem))]' : 'w-[calc(100vw-1.5rem)]'}>
+                <TimelineBar
+                  plan={plan}
+                  interval={interval}
+                  clock={clock}
+                  mapClock={mapClock}
+                  onMapClockChange={setMapClock}
+                  departureMs={departureMs}
+                  onDepartureChange={changeDeparture}
+                  tripDurationS={route.duration_s}
+                  layer={layer}
+                  onLayerChange={setLayer}
+                  showHeatmap={showHeatmap}
+                  onShowHeatmapChange={setShowHeatmap}
+                  compact={!desktop}
+                />
+              </div>
+            )}
+            <div className="flex gap-2">
+              {mode === 'compare' && (
+                <ToggleGroup type="single" size="sm" variant="outline" className="bg-popover/90" value={is3D ? '3d' : '2d'} onValueChange={(v) => v && setIs3D(v === '3d')} aria-label="Map view">
+                  <ToggleGroupItem value="2d" className="px-3">
                     2D
-                  </ToggleButton>
-                  <ToggleButton value="3d" sx={{ px: 1.5, gap: 0.5 }}>
-                    <ThreeDRotationIcon fontSize="small" /> 3D
-                  </ToggleButton>
-                </ToggleButtonGroup>
-              </Paper>
-            )}
-            {MOCK && (
-              <Suspense>
-                <ScenarioSwitcher onChange={() => plan && submit()} />
-              </Suspense>
-            )}
-          </Stack>
-        )}
-
-        {mode === 'compare' && plan && route && (
-          <Box sx={{ position: 'absolute', left: 12, right: { xs: 12, md: 56 }, bottom: desktop ? 28 : sheet === 'peek' ? 144 : 'auto', top: desktop ? 'auto' : 56, zIndex: 2, display: !desktop && sheet === 'full' ? 'none' : 'block' }}>
-            <TimelineBar
-              plan={plan}
-              clock={clock}
-              departureMs={departureMs}
-              onDepartureChange={setDepartureMs}
-              tripDurationS={route.duration_s}
-              layer={layer}
-              onLayerChange={setLayer}
-              showHeatmap={showHeatmap}
-              onShowHeatmapChange={setShowHeatmap}
-            />
-          </Box>
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="3d" className="px-3">
+                    3D
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              )}
+              {MOCK && (
+                <Suspense>
+                  <ScenarioSwitcher onChange={() => plan && submit()} />
+                </Suspense>
+              )}
+            </div>
+          </div>
         )}
 
         {navigating && (
-          <NavigateOverlay route={route} nav={nav.state!} states={states} departureMs={departureMs} onSpeedChange={nav.setSpeed} onTogglePlaying={nav.togglePlaying} onEnd={() => setMode('compare')} />
+          <NavigateOverlay
+            route={route}
+            nav={nav.state!}
+            states={states}
+            departureMs={departureMs}
+            onSpeedChange={nav.setSpeed}
+            onTogglePlaying={nav.togglePlaying}
+            onEnd={() => setMode('compare')}
+          />
         )}
 
         {!desktop && mode !== 'navigate' && (
-          <BottomSheet snap={sheet} onSnapChange={setSheet}>
+          <BottomSheet snap={sheet} onSnapChange={setSheet} contentKey={`${mode}:${selectedRouteId}:${draft.stops.length}`} onHeightChange={setSheetH}>
             {mode === 'plan' && header}
             {panel}
           </BottomSheet>
         )}
-      </Box>
-    </Box>
+      </main>
+    </div>
   )
 }

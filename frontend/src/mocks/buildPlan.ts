@@ -2,9 +2,9 @@
 // in TypeScript what the Django planner will do: checkpoints for every
 // interval, hourly weather and risk per checkpoint, and the recommendation for
 // every departure hour the pin can reach.
-import type { Checkpoint, CheckpointSeries, Corridor, DepartureOption, Interval, Level, LngLat, Plan, PlanRequest, Route, RouteSummary, Timeline } from '../api/types'
-import { INTERVALS } from '../api/types'
-import { seriesIndex } from '../lib/plan'
+import type { Checkpoint, CheckpointSeries, Corridor, DepartureOption, Interval, Level, LngLat, Plan, PlanRequest, Route, RouteSummary, Timeline } from '@/api/types'
+import { INTERVALS } from '@/api/types'
+import { seriesIndex } from '@/lib/plan'
 import { checkpointsAlong, syntheticInstructions } from './geometry'
 import { loadLevel, rainLevel, recommend, snowLevel, summarize, windLevel } from './rules'
 import { makeField, type ScenarioId, type Weather } from './scenarios'
