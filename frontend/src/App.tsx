@@ -156,8 +156,8 @@ export default function App() {
   // Keep the routes inside the part of the map not covered by the panel, timeline or sheet.
   const timelineOnMap = mode === 'compare' && plan && route
   const mapPadding = desktop
-    ? { top: timelineOnMap ? 250 : 60, bottom: 40, left: 60, right: 60 }
-    : { top: timelineOnMap ? 170 : 60, bottom: sheet === 'peek' ? 140 : sheetH + 16, left: 24, right: 24 }
+    ? { top: timelineOnMap ? 170 : 60, bottom: 40, left: 60, right: 60 }
+    : { top: timelineOnMap ? 150 : 60, bottom: sheet === 'peek' ? 140 : sheetH + 16, left: 24, right: 24 }
   const navigating = mode === 'navigate' && plan && route && nav.state
 
   return (
