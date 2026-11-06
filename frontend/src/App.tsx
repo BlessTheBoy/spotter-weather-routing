@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { fetchPlan } from '@/api/client'
+import { ApiError, fetchPlan } from '@/api/client'
 import type { Interval, Place, Plan } from '@/api/types'
 import { BottomSheet, type SheetSnap } from '@/components/BottomSheet'
 import { ComparePanel } from '@/components/ComparePanel'
@@ -28,7 +28,7 @@ const DEFAULT_DRAFT: TripDraft = {
   load: '42000',
 }
 
-export default function App({ demo }: { demo: boolean }) {
+export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () => Promise<void> }) {
   const desktop = useMediaQuery('(min-width: 900px)')
   const clock = useMemo(() => createClock(48), [])
   const [mode, setMode] = useState<MapMode>('plan')
@@ -39,7 +39,8 @@ export default function App({ demo }: { demo: boolean }) {
   const [interval, setIntervalState] = useState<Interval>(10)
   const [plan, setPlan] = useState<Plan | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{ message: string; code?: string } | null>(null)
+  const [retryInDemo, setRetryInDemo] = useState(false)
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [departureMs, setDepartureMs] = useState(0)
   const [hovered, setHovered] = useState<number | null>(null)
@@ -103,7 +104,7 @@ export default function App({ demo }: { demo: boolean }) {
       setMode('compare')
       setSheet('initial')
     } catch (e) {
-      if (!ctrl.signal.aborted) setError(e instanceof Error ? e.message : 'Something went wrong.')
+      if (!ctrl.signal.aborted) setError({ message: e instanceof Error ? e.message : 'Something went wrong.', code: e instanceof ApiError ? e.code : undefined })
     } finally {
       if (inflight.current === ctrl) setLoading(false)
     }
@@ -118,6 +119,15 @@ export default function App({ demo }: { demo: boolean }) {
     setMode('navigate')
   }
 
+  // After switching to demo data from a live-weather error, re-run the same trip.
+  useEffect(() => {
+    if (demo && retryInDemo) {
+      setRetryInDemo(false)
+      void submit()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demo, retryInDemo])
+
   // Esc leaves navigation.
   useEffect(() => {
     if (mode !== 'navigate') return
@@ -128,7 +138,16 @@ export default function App({ demo }: { demo: boolean }) {
 
   const panel =
     mode === 'plan' || !plan || !route ? (
-      <PlanPanel draft={draft} onDraftChange={setDraft} interval={interval} onIntervalChange={setInterval} loading={loading} error={error} onSubmit={submit} />
+      <PlanPanel
+        draft={draft}
+        onDraftChange={setDraft}
+        interval={interval}
+        onIntervalChange={setInterval}
+        loading={loading}
+        error={error?.message ?? null}
+        onUseDemo={!demo && error?.code === 'weather_quota' ? () => (setError(null), setRetryInDemo(true), void onUseDemo()) : undefined}
+        onSubmit={submit}
+      />
     ) : (
       <ComparePanel
         plan={plan}

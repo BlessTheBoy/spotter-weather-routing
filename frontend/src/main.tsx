@@ -37,11 +37,18 @@ function Root() {
     setPending(m)
   }
 
+  // From inside the app: live weather is out of quota, so carry on with demo data.
+  async function switchToDemo() {
+    await import('./mocks/mockApi')
+    setDataMode('demo')
+    setMode('demo')
+  }
+
   return (
     <>
       {appLoaded ? (
         <Suspense>
-          <App demo={mode === 'demo'} />
+          <App demo={mode === 'demo'} onUseDemo={switchToDemo} />
         </Suspense>
       ) : (
         <div className="h-full bg-cover bg-center" style={{ backgroundImage: 'url(/backdrop.jpg)' }} aria-hidden />

@@ -47,10 +47,12 @@ interface Props {
   onIntervalChange: (i: Interval) => void
   loading: boolean
   error: string | null
+  /** Offered when live weather is out of quota: continue the same trip on demo data. */
+  onUseDemo?: () => void
   onSubmit: () => void
 }
 
-export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, loading, error, onSubmit }: Props) {
+export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, loading, error, onUseDemo, onSubmit }: Props) {
   const set = (patch: Partial<TripDraft>) => onDraftChange({ ...draft, ...patch })
   const loadMsg = loadError(draft.load)
   const heavy = !loadMsg && Number(draft.load) > LEGAL_GROSS_LB
@@ -129,7 +131,14 @@ export function PlanPanel({ draft, onDraftChange, interval, onIntervalChange, lo
 
       {error && (
         <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription className="flex flex-col gap-2">
+            {error}
+            {onUseDemo && (
+              <Button type="button" size="sm" variant="secondary" className="self-start" onClick={onUseDemo}>
+                Use demo data for this trip
+              </Button>
+            )}
+          </AlertDescription>
         </Alert>
       )}
       {outOfRegion(draft) && <p className="text-center text-xs text-muted-foreground">{REGION_MESSAGE} Pick places there to find routes.</p>}

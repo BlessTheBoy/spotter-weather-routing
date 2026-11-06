@@ -189,3 +189,16 @@ def test_missing_load_is_an_error(client):
     r = client.post("/api/plan", json.dumps(body), content_type="application/json")
     assert r.status_code == 400
     assert r.json()["detail"] == "Enter the load in pounds."
+
+
+def test_weather_quota_returns_503_with_a_code(client, monkeypatch):
+    from planner import views
+    from planner.services.http import WeatherQuotaError
+
+    def out_of_quota(_req):
+        raise WeatherQuotaError("Live weather has hit its free daily limit.")
+
+    monkeypatch.setattr(views, "build_plan", out_of_quota)
+    res = post(client)
+    assert res.status_code == 503
+    assert res.json()["code"] == "weather_quota"

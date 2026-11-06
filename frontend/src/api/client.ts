@@ -3,7 +3,15 @@ import type { Place, Plan, PlanRequest } from './types'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  /** Server error code, e.g. 'weather_quota' when live weather is out of its free allowance. */
+  readonly code?: string
+
+  constructor(message: string, code?: string) {
+    super(message)
+    this.code = code
+  }
+}
 
 async function parse<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}))
@@ -15,7 +23,7 @@ async function parse<T>(res: Response): Promise<T> {
         .flat()
         .map((v) => (typeof v === 'object' ? Object.values(v as object).flat().join(' ') : String(v)))
         .join(' ')
-    throw new ApiError(detail || `Request failed (${res.status})`)
+    throw new ApiError(detail || `Request failed (${res.status})`, body.code)
   }
   return body as T
 }

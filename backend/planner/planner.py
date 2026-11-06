@@ -22,8 +22,10 @@ from .services.routing import Route, route_options
 from .services.weather import Hourly, forecasts, snap
 
 INTERVALS = (10, 25, 50)
-WEATHER_BUDGET = 520  # locations per plan; Open-Meteo allows 600 a minute
-MIN_CORRIDOR_CELLS = 120
+# Open-Meteo's free tier counts locations: 600 a minute, 10,000 a day per IP. ~200 a plan
+# keeps a shared server IP good for ~50 cold plans a day; the cache makes repeats free.
+WEATHER_BUDGET = 200
+MIN_CORRIDOR_CELLS = 60
 # Snap grids for weather lookups, finest first; long trips step up to stay in budget.
 GRIDS = (0.1, 0.2, 0.3, 0.5)
 GEOMETRY_TOLERANCE_M = 5.0

@@ -20,6 +20,14 @@ TIMEOUT_S = 20
 class UpstreamError(Exception):
     """A third-party API failed in a way the user should hear about."""
 
+    code = "upstream"
+
+
+class WeatherQuotaError(UpstreamError):
+    """The free weather API's daily or hourly allowance is used up; demo data still works."""
+
+    code = "weather_quota"
+
 
 def cache_key(prefix: str, payload: Any) -> str:
     digest = hashlib.sha1(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()

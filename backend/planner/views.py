@@ -54,4 +54,6 @@ def plan(request: Request) -> Response:
     try:
         return Response(build_plan(req))
     except UpstreamError as exc:
-        return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        # `code` lets the app offer demo data when live weather is out of quota.
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE if exc.code == "weather_quota" else status.HTTP_502_BAD_GATEWAY
+        return Response({"detail": str(exc), "code": exc.code}, status=status_code)

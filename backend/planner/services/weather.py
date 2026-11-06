@@ -21,7 +21,7 @@ import requests
 from django.core.cache import cache
 
 from ..domain.geometry import LngLat
-from .http import TIMEOUT_S, UpstreamError, session
+from .http import TIMEOUT_S, UpstreamError, WeatherQuotaError, session
 
 log = logging.getLogger("planner")
 
@@ -88,6 +88,9 @@ def _request(points: list[LngLat]) -> list[Hourly]:
             r = session.post(OPEN_METEO_URL, data=data, timeout=TIMEOUT_S * 2)
         except requests.RequestException as exc:
             raise UpstreamError("The weather service is unavailable right now.") from exc
+        if r.status_code == 429 and _quota_spent(r):
+            # Daily/hourly allowance gone: retrying only wastes the user's time.
+            raise WeatherQuotaError("Live weather has hit its free daily limit. Explore with demo data, or try again later.")
         if r.status_code == 429 and attempt < 2:
             wait = min(float(r.headers.get("Retry-After", 5)), 15)
             log.warning("Open-Meteo rate limited, retrying in %ss", wait)
@@ -98,7 +101,16 @@ def _request(points: list[LngLat]) -> list[Hourly]:
         body = r.json()
         blocks = body if isinstance(body, list) else [body]
         return [_parse(b) for b in blocks]
-    raise UpstreamError("The weather service is busy. Try again in a minute.")
+    raise WeatherQuotaError("Live weather is busy right now. Explore with demo data, or try again in a minute.")
+
+
+def _quota_spent(r: requests.Response) -> bool:
+    """Open-Meteo names the window it ran out of; only the per-minute one is worth waiting for."""
+    try:
+        reason = str(r.json().get("reason", "")).lower()
+    except ValueError:
+        return False
+    return "daily" in reason or "hourly" in reason or "monthly" in reason
 
 
 def forecasts(points: list[LngLat], grid: float = GRID_DEG) -> dict[LngLat, Hourly]:
