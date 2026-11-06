@@ -46,8 +46,8 @@ export function DepartureField({ value, onChange }: Props) {
           <span className="truncate">{label}</span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
-        <div className="flex flex-wrap gap-1.5 p-3">
+      <PopoverContent className="w-[22rem] max-w-[calc(100vw-2rem)] p-0" align="start">
+        <div className="grid grid-cols-2 gap-1.5 p-3">
           {quick.map((q) => (
             <Button key={q.label} size="sm" variant="secondary" onClick={() => (onChange(clamp(q.at)), setOpen(false))}>
               {q.label}
@@ -56,6 +56,8 @@ export function DepartureField({ value, onChange }: Props) {
         </div>
         <Separator />
         <Calendar
+          className="w-full p-3 [--cell-size:--spacing(9)]"
+          classNames={{ root: 'w-full' }}
           mode="single"
           selected={value}
           onSelect={(d) => d && onChange(clamp(set(d, { hours: value.getHours(), minutes: value.getMinutes() })))}

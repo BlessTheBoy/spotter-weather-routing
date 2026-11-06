@@ -9,6 +9,9 @@ export default defineConfig({
   server: {
     proxy: { '/api': 'http://localhost:8000' },
   },
+  preview: {
+    proxy: { '/api': 'http://localhost:8000' },
+  },
   build: {
     chunkSizeWarningLimit: 1200, // maplibre-gl alone is ~1 MB minified
     rolldownOptions: {
