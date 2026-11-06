@@ -9,6 +9,8 @@ are "> 1.00" and "> 3.0", so 1.00 in/hr rain and 3.0 in/hr snow are still Severe
 from dataclasses import dataclass
 from enum import IntEnum
 
+import numpy as np
+
 
 class Risk(IntEnum):
     LOW = 0
@@ -93,3 +95,34 @@ def assess(wind_mph: float, rain_in_hr: float, snow_in_hr: float, load_lb: float
     snow = classify_snow(snow_in_hr)
     load = classify_load(wind_mph, load_lb)
     return Assessment(level=max(wind, rain, snow, load), wind=wind, rain=rain, snow=snow, load=load)
+
+
+# --- Hourly series ---------------------------------------------------------
+# The same bands applied to whole numpy arrays at once, for a checkpoint's
+# hourly series. Each level is the count of thresholds the value has reached,
+# with the same >= / > edges as the scalar functions above.
+
+
+def wind_levels(mph: np.ndarray) -> np.ndarray:
+    return (mph >= 25).astype(np.int8) + (mph >= 35) + (mph >= 45) + (mph >= 55)
+
+
+def rain_levels(in_per_hr: np.ndarray) -> np.ndarray:
+    r = in_per_hr
+    return (r >= 0.10).astype(np.int8) + (r >= 0.25) + (r >= 0.50) + (r > 1.00)
+
+
+def snow_levels(in_per_hr: np.ndarray) -> np.ndarray:
+    s = in_per_hr
+    return (s >= 0.5).astype(np.int8) + (s >= 1.0) + (s >= 2.0) + (s > 3.0)
+
+
+def load_levels(wind_mph: np.ndarray, load_lb: float) -> np.ndarray:
+    w = wind_mph
+    out = np.zeros(w.shape, dtype=np.int8)
+    if load_lb > 40_000:
+        out[w >= 35] = Risk.SEVERE
+    if load_lb > 30_000:
+        out[w >= 45] = Risk.NO_TRAVEL
+    out[w >= 55] = Risk.NO_TRAVEL
+    return out

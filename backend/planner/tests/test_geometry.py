@@ -1,6 +1,9 @@
+import math
+
+import numpy as np
 import pytest
 
-from planner.domain.geometry import checkpoints_along, decode_polyline, haversine_mi
+from planner.domain.geometry import checkpoints_along, decode_polyline, douglas_peucker, haversine_mi
 
 
 def straight_line(miles: float, n: int = 101):
@@ -48,3 +51,50 @@ def test_provider_distance_rescales_miles():
 def test_decode_polyline_reference_example():
     # Example from Google's polyline algorithm docs.
     assert decode_polyline("_p~iF~ps|U_ulLnnqC_mqNvxq`@") == [(-120.2, 38.5), (-120.95, 40.7), (-126.453, 43.252)]
+
+
+def _meters_to_deg(m: float) -> float:
+    return m / 111_195.0  # one degree at the equator, in metres
+
+
+def test_douglas_peucker_collapses_a_straight_line_to_its_ends():
+    pts = straight_line(10, n=500)
+    assert douglas_peucker(pts, 5.0) == [0, 499]
+
+
+def test_douglas_peucker_keeps_short_lines_whole():
+    assert douglas_peucker([(0, 0), (1, 1)], 5.0) == [0, 1]
+
+
+def test_douglas_peucker_keeps_the_curve_and_stays_within_tolerance():
+    # 2 km straight, a 90° bend of 300 m radius, 2 km straight; one vertex per ~5 m.
+    r = _meters_to_deg(300)
+    straight_in = [(_meters_to_deg(-2000 + 5 * i), 0.0) for i in range(400)]
+    bend = [(r * math.sin(a), r - r * math.cos(a)) for a in np.linspace(0, math.pi / 2, 95)]
+    straight_out = [(r, r + _meters_to_deg(5 * i)) for i in range(1, 401)]
+    pts = straight_in + bend + straight_out
+    keep = douglas_peucker(pts, 5.0)
+
+    first_bend, last_bend = len(straight_in), len(straight_in) + len(bend) - 1
+    kept_in_bend = [i for i in keep if first_bend <= i <= last_bend]
+    # Straights collapse, but the bend keeps several vertices (a 300 m arc needs ~5 at 5 m).
+    assert len(keep) < 20
+    assert len(kept_in_bend) >= 4
+    # Every original vertex is within 5 m (plus rounding) of the simplified line.
+    for i, p in enumerate(pts):
+        a = max(k for k in keep if k <= i)
+        b = min(k for k in keep if k >= i)
+        assert _segment_distance_m(p, pts[a], pts[b]) <= 5.01
+
+
+def _segment_distance_m(p, a, b) -> float:
+    px, py, ax, ay, bx, by = (v * 111_195.0 for v in (*p, *a, *b))
+    dx, dy = bx - ax, by - ay
+    t = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(px - ax - t * dx, py - ay - t * dy)
+
+
+def test_douglas_peucker_keeps_vertices_even_thinning_would_drop():
+    # A zig-zag of 20 m teeth: every vertex matters at 5 m.
+    pts = [(_meters_to_deg(10 * i), _meters_to_deg(20 * (i % 2))) for i in range(50)]
+    assert douglas_peucker(pts, 5.0) == list(range(50))

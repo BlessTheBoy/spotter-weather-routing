@@ -1,6 +1,18 @@
+import numpy as np
 import pytest
 
-from planner.domain.risk import Risk, assess, classify_load, classify_rain, classify_snow, classify_wind
+from planner.domain.risk import (
+    Risk,
+    assess,
+    classify_load,
+    classify_rain,
+    classify_snow,
+    classify_wind,
+    load_levels,
+    rain_levels,
+    snow_levels,
+    wind_levels,
+)
 
 
 @pytest.mark.parametrize(
@@ -91,3 +103,14 @@ def test_load_rule_turns_severe_wind_into_no_travel():
 
 def test_calm_checkpoint_has_no_drivers():
     assert assess(5, 0, 0, 80_000).drivers == []
+
+
+def test_array_levels_match_the_scalar_rules_on_every_edge():
+    edges = [0, 0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 25, 35, 45, 55]
+    values = np.unique(np.concatenate([np.linspace(0, 70, 7001), edges, np.nextafter(edges, -1), np.nextafter(edges, 100)]))
+    values = values[values >= 0]
+    assert wind_levels(values).tolist() == [classify_wind(v) for v in values]
+    assert rain_levels(values).tolist() == [classify_rain(v) for v in values]
+    assert snow_levels(values).tolist() == [classify_snow(v) for v in values]
+    for load in (0, 30_000, 30_001, 40_000, 40_001, 200_000):
+        assert load_levels(values, load).tolist() == [classify_load(v, load) for v in values]

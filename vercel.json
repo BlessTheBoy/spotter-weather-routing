@@ -4,7 +4,7 @@
   "buildCommand": "npm --prefix frontend run build",
   "outputDirectory": "frontend/dist",
   "functions": {
-    "api/index.py": { "maxDuration": 60, "excludeFiles": "{frontend/**,backend/.venv/**,backend/planner/tests/**}" }
+    "api/index.py": { "maxDuration": 60, "excludeFiles": "{frontend/**,backend/.venv/**,backend/planner/tests/**,backend/fixtures/**}" }
   },
   "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index" }]
 }
