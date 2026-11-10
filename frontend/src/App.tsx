@@ -91,6 +91,24 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
     if (plan) clock.set((ms - Date.parse(plan.timeline.start)) / HOUR)
   }
 
+  // The forecast slider drives the corridor heatmap: Play or scrubbing turns it on, and going back to
+  // "my trip" turns it off again, unless the user switched it on themselves in Layers.
+  const autoHeat = useRef(false)
+  function changeMapClock(c: MapClock) {
+    setMapClock(c)
+    if (c === 'forecast' && !showHeatmap) {
+      autoHeat.current = true
+      setShowHeatmap(true)
+    } else if (c === 'trip' && autoHeat.current) {
+      autoHeat.current = false
+      setShowHeatmap(false)
+    }
+  }
+  function changeHeatmap(on: boolean) {
+    autoHeat.current = false
+    setShowHeatmap(on)
+  }
+
   /** A suggested departure, applied in one tap with a way back. */
   function applyDeparture(ms: number) {
     const previous = departureMs
@@ -121,7 +139,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
       clock.pause()
       clock.set((dep - Date.parse(next.timeline.start)) / HOUR)
       setDepartureMs(dep)
-      setMapClock('trip')
+      changeMapClock('trip')
       setHovered(null)
       setSelectedRouteId(next.schedule[interval].find((o) => Date.parse(o.departure) === dep)?.recommendation.route_id ?? next.routes[0].id)
       setPlan(next)
@@ -227,7 +245,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
         interval={interval}
         clock={clock}
         mapClock={mapClock}
-        onMapClockChange={setMapClock}
+        onMapClockChange={changeMapClock}
         departureMs={departureMs}
         onDepartureChange={changeDeparture}
         onApplyDeparture={applyDeparture}
@@ -237,7 +255,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
         layer={layer}
         onLayerChange={setLayer}
         showHeatmap={showHeatmap}
-        onShowHeatmapChange={setShowHeatmap}
+        onShowHeatmapChange={changeHeatmap}
         compact={!desktop}
         bare={!desktop}
         onPlay={onPlay}
@@ -350,7 +368,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
                     plan={plan!}
                     clock={clock}
                     mapClock={mapClock}
-                    onMapClockChange={setMapClock}
+                    onMapClockChange={changeMapClock}
                     departureMs={departureMs}
                     tripDurationS={route.duration_s}
                     onPlay={onPlay}
@@ -395,7 +413,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
               >
                 3D
               </Toggle>
-              <LayersButton layer={layer} onLayerChange={setLayer} showHeatmap={showHeatmap} onShowHeatmapChange={setShowHeatmap} round />
+              <LayersButton layer={layer} onLayerChange={setLayer} showHeatmap={showHeatmap} onShowHeatmapChange={changeHeatmap} round />
             </div>
 
             <div className="absolute inset-x-3 bottom-[max(1rem,env(safe-area-inset-bottom))] z-20">

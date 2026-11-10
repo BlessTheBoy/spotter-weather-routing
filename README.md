@@ -26,7 +26,7 @@ Refresh the page to switch.
 | Risk from the wind/rain/snow and load rules | `backend/planner/domain/risk.py`, with the scalar and vectorised versions tested against each other on every band edge. |
 | Recommend: fewest Severe miles → fewest High miles → lowest average risk → shortest time | `backend/planner/domain/recommend.py`. Each route gets a one-line verdict per risk level (Low "Safe to run" … No Travel "Do not dispatch"). "Why this route" names the deciding criterion and shows the full ranking table. |
 | Routes, checkpoints, risk, ETAs and summaries on a map | The selected route is coloured by risk at ETA, with alternatives in grey. Checkpoint dots (once zoomed in) and Severe/No Travel weather badges open a popup: level and verdict, the readings that set it, the load-rule note and ETA. A risk strip shows the route by distance; hover any stretch for its checkpoint. A ranking table backs the recommendation. |
-| Weather heatmap along the corridor with a 0–48 h slider | An H3 hex corridor around all routes, Risk/Wind/Rain/Snow layers, and a 48 h track with Play. |
+| Weather heatmap along the corridor with a 0–48 h slider | An H3 hex corridor around all routes, Risk/Wind/Rain/Snow layers, and a 48 h track with Play. The heatmap turns on when the forecast plays or the knob is dragged, and Layers turns it on any time. |
 
 Beyond the brief, kept small and in service of it:
 - **Departure pin on the timeline.** Drag it and every route, checkpoint and the recommendation re-time instantly. Every departure hour is precomputed, so dragging never waits on the network. The track is tinted by how safe the selected route would be for each departure, and a green flag marks the first safer departure (one tap applies it, with Undo).
