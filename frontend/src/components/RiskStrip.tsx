@@ -42,31 +42,14 @@ export function RiskStrip({ route, states, hoveredIndex, onHover, showTicks }: P
 }
 
 function Ticks({ route, states }: { route: Route; states: CheckpointState[] }) {
-  // Start, the thirds and the destination, each snapped to its nearest checkpoint.
-  // Snapping can pull two ticks together (coarse intervals): drop any that would collide.
-  const picks = [0, 1, 2, 3]
-    .map((i) => {
-      const target = (i / 3) * route.distance_mi
-      return states.reduce((best, cp) => (Math.abs(cp.mile - target) < Math.abs(best.mile - target) ? cp : best))
-    })
-    .filter((cp, i, all) => i === 0 || i === all.length - 1 || (cp.mile - all[i - 1].mile > route.distance_mi * 0.22 && all[all.length - 1].mile - cp.mile > route.distance_mi * 0.22))
+  // Only the ends: the departure time lives on the timeline's Leave flag, and hovering a stretch shows the rest.
+  const last = states[states.length - 1]
   return (
-    <div className="relative mt-1 h-7 text-[11px] leading-tight text-muted-foreground">
-      {picks.map((cp, i) => (
-        <div
-          key={i}
-          className="absolute whitespace-nowrap"
-          style={{
-            left: `${(cp.mile / (route.distance_mi || 1)) * 100}%`,
-            transform: i === 0 ? 'none' : i === picks.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)',
-            textAlign: i === 0 ? 'left' : i === picks.length - 1 ? 'right' : 'center',
-          }}
-        >
-          {cp.mile.toFixed(0)} mi
-          <br />
-          {formatTime(cp.eta)}
-        </div>
-      ))}
+    <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">
+      <span>0 mi</span>
+      <span>
+        {route.distance_mi.toFixed(0)} mi{last ? ` · ${formatTime(last.eta)}` : ''}
+      </span>
     </div>
   )
 }

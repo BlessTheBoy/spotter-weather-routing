@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ChevronDownIcon, NavigationIcon, PlayCircleIcon, StarIcon, TriangleAlertIcon } from 'lucide-react'
+import { ArrowLeftIcon, ChevronDownIcon, InfoIcon, NavigationIcon, OctagonAlertIcon, PlayCircleIcon, StarIcon, TriangleAlertIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { Criterion, Interval, Plan, Route, RouteSummary } from '@/api/types'
 import { RiskStrip } from '@/components/RiskStrip'
@@ -6,10 +6,11 @@ import { StartDialog } from '@/components/StartDialog'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatDuration, formatMiles, formatTime } from '@/lib/format'
 import { isNow, optionAt, type CheckpointState } from '@/lib/plan'
-import { CRITERIA_LABELS, RISK_LEVELS, riskColor, riskLabel } from '@/lib/risk'
+import { CRITERIA_LABELS, RISK_LEVELS, riskColor, riskLabel, riskVerdict } from '@/lib/risk'
 import { cn } from '@/lib/utils'
 
 /** What every Compare surface (desktop panel, mobile deck and sheet) needs from the plan. */
@@ -62,7 +63,7 @@ function versusPick(view: Route, viewS: RouteSummary, pick: Route, pickS: RouteS
 }
 
 /** Back to Plan, with the trip in one line. */
-export function TripTitle({ plan, departureMs, onEdit }: Pick<CompareProps, 'plan' | 'departureMs' | 'onEdit'>) {
+export function TripTitle({ plan, onEdit }: Pick<CompareProps, 'plan' | 'onEdit'>) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
       <Button variant="ghost" size="icon" onClick={onEdit} aria-label="Edit trip" className="-ml-2 shrink-0">
@@ -74,7 +75,7 @@ export function TripTitle({ plan, departureMs, onEdit }: Pick<CompareProps, 'pla
         </p>
         <p className="truncate text-xs text-muted-foreground">
           {plan.stops.length ? `${plan.stops.length} stop${plan.stops.length > 1 ? 's' : ''} · ` : ''}
-          {plan.load_lb.toLocaleString()} lb · leave {formatTime(departureMs)}
+          {plan.load_lb.toLocaleString()} lb
         </p>
       </div>
     </div>
@@ -126,63 +127,46 @@ export function RouteChips(props: Pick<CompareProps, 'plan' | 'interval' | 'depa
   )
 }
 
-/** The worst miles on a route in a few words: "50 mi Severe · 40 mi High", or that it's clear. */
+/** The High-or-worse miles on a route in a few words: "50 mi Severe · 40 mi High", or nothing. */
 export function badMiles(s: RouteSummary): string {
-  const parts = RISK_LEVELS.slice(2)
+  return RISK_LEVELS.slice(2)
     .filter((l) => s.miles_by_level[l.key] > 0)
     .reverse()
     .map((l) => `${formatMiles(s.miles_by_level[l.key])} ${l.label}`)
-  return parts.length ? parts.join(' · ') : s.max_level === 1 ? 'Moderate at worst' : 'Low risk the whole way'
+    .join(' · ')
 }
 
-/** One line about the selected route, for the mobile deck. */
-export function RouteSummaryLine(props: Pick<CompareProps, 'plan' | 'interval' | 'departureMs' | 'selectedRouteId'>) {
+/** One line about the selected route: the verdict, its worst miles and the arrival. */
+export function RouteSummaryLine(props: Pick<CompareProps, 'plan' | 'interval' | 'departureMs' | 'selectedRouteId'> & { miles?: boolean; className?: string }) {
   const { route, summary, isPick } = useCompare(props)
+  const level = summary.max_level
+  const bad = props.miles === false ? '' : badMiles(summary)
   return (
-    <p className="text-xs leading-snug">
-      {isPick && <span className="font-semibold text-primary">Recommended · </span>}
-      <span
-        style={{
-          color: summary.max_level >= 2 ? riskColor(summary.max_level) : undefined,
-        }}
-        className={cn(summary.max_level >= 2 && 'font-semibold')}
-      >
-        {badMiles(summary)}
+    <p className={cn('text-xs leading-snug', props.className)}>
+      {/* When even the pick is Severe it's only the least bad option, not a recommendation. */}
+      {isPick && <span className="font-semibold text-primary">{level >= 3 ? 'Least risky' : 'Recommended'} · </span>}
+      <span className="font-semibold" style={{ color: level >= 2 ? riskColor(level) : undefined }}>
+        {riskVerdict(level)}
       </span>
+      {bad && <span style={{ color: riskColor(level) }}> · {bad}</span>}
       <span className="text-muted-foreground"> · arrive {formatTime(props.departureMs + route.duration_s * 1000)}</span>
     </p>
   )
 }
 
-/** Why this route, its risk along the way, and how the routes rank. */
+/** The selected route in three lines (verdict, risk strip, miles), with the why and the ranking folded away. */
 export function RouteDetails(props: CompareProps & { rankOpen?: boolean }) {
-  const { plan, interval, departureMs, states, hoveredCheckpoint, onHoverCheckpoint } = props
+  const { plan, departureMs, states, hoveredCheckpoint, onHoverCheckpoint } = props
   const { option, rec, routes, route: r, summary: s, isPick } = useCompare(props)
-  const [rankOpen, setRankOpen] = useState(props.rankOpen ?? false)
-  const fastest = routes.reduce((a, b) => (b.duration_s < a.duration_s ? b : a))
+  const [whyOpen, setWhyOpen] = useState(props.rankOpen ?? false)
   const pick = plan.routes.find((x) => x.id === rec.route_id)!
-  const extra = r.duration_s - fastest.duration_s
   const longRange = departureMs > Date.parse(plan.timeline.long_range_after)
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm">
-        {isPick ? (
-          <>
-            <span className="font-semibold text-primary">Recommended. </span>
-            {rec.reason}
-            {extra > 60 &&
-              ` Costs +${formatDuration(extra)}${r.distance_mi > fastest.distance_mi ? ` and +${formatMiles(r.distance_mi - fastest.distance_mi)}` : ''} against ${fastest.label}.`}
-          </>
-        ) : (
-          <span className="text-muted-foreground">{versusPick(r, s, pick, option.summaries[pick.id])}</span>
-        )}
-      </p>
+      <RouteSummaryLine {...props} miles={false} className="text-sm" />
       <RiskStrip route={r} states={states} hoveredIndex={hoveredCheckpoint} onHover={onHoverCheckpoint} showTicks />
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
-        <span className="text-muted-foreground">
-          {formatMiles(r.distance_mi)} · arrive {formatTime(departureMs + r.duration_s * 1000)}
-        </span>
         {RISK_LEVELS.slice(1)
           .filter((l) => s.miles_by_level[l.key] > 0)
           .reverse()
@@ -191,7 +175,6 @@ export function RouteDetails(props: CompareProps & { rankOpen?: boolean }) {
               {formatMiles(s.miles_by_level[l.key])} {l.label}
             </span>
           ))}
-        <span className="text-muted-foreground">checkpoints every {interval} mi</span>
       </div>
 
       {longRange && (
@@ -201,12 +184,13 @@ export function RouteDetails(props: CompareProps & { rankOpen?: boolean }) {
         </Alert>
       )}
 
-      <Collapsible open={rankOpen} onOpenChange={setRankOpen} className="rounded-xl border">
+      <Collapsible open={whyOpen} onOpenChange={setWhyOpen} className="rounded-xl border">
         <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2.5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
-          How the routes rank
-          <ChevronDownIcon className={cn('size-4 transition-transform', rankOpen && 'rotate-180')} />
+          Why this route
+          <ChevronDownIcon className={cn('size-4 transition-transform', whyOpen && 'rotate-180')} />
         </CollapsibleTrigger>
-        <CollapsibleContent className="px-3 pb-3">
+        <CollapsibleContent className="flex flex-col gap-2 px-3 pb-3">
+          <p className="text-sm text-muted-foreground">{isPick ? rec.reason : versusPick(r, s, pick, option.summaries[pick.id])}</p>
           <Ranking routes={routes} summaries={option.summaries} deciding={rec.deciding_criterion} />
         </CollapsibleContent>
       </Collapsible>
@@ -215,14 +199,16 @@ export function RouteDetails(props: CompareProps & { rankOpen?: boolean }) {
 }
 
 /** Start now (live) or Preview drive (later departure), naming the worst weather ahead. */
-export function StartButton(props: CompareProps & { className?: string; hint?: boolean }) {
+export function StartButton(props: CompareProps & { className?: string }) {
   const { plan, interval, departureMs, onApplyDeparture, onSelectRoute, onStart } = props
   const { route, summary } = useCompare(props)
   const [confirm, setConfirm] = useState(false)
   const live = isNow(departureMs)
   const severe = summary.miles_by_level.severe
   const noTravel = summary.miles_by_level.no_travel
-  const hazard = noTravel > 0 ? `${formatMiles(noTravel)} No Travel ahead` : severe > 0 ? `${formatMiles(severe)} Severe ahead` : null
+  // The hazard is named in the summary and the Start dialog; the button only flags it.
+  const hazard = severe + noTravel > 0
+  const Icon = hazard ? (noTravel > 0 ? OctagonAlertIcon : TriangleAlertIcon) : live ? NavigationIcon : PlayCircleIcon
 
   function start() {
     // Severe and No Travel ask first, with the safer options; anything milder starts straight away.
@@ -238,13 +224,9 @@ export function StartButton(props: CompareProps & { className?: string; hint?: b
         onClick={start}
         variant={live ? 'default' : 'secondary'}
       >
-        {live ? <NavigationIcon data-icon="inline-start" /> : <PlayCircleIcon data-icon="inline-start" />}
-        <span className="truncate">
-          {live ? 'Start now' : 'Preview drive'}
-          {hazard && ` · ${hazard}`}
-        </span>
+        <Icon data-icon="inline-start" className={cn(hazard && !live && (noTravel > 0 ? 'text-risk-no-travel' : 'text-risk-severe'))} />
+        {live ? 'Start now' : 'Preview drive'}
       </Button>
-      {props.hint && !live && <p className="mt-1.5 text-center text-xs text-muted-foreground">Leaving {formatTime(departureMs)}. Move the Leave flag to now for live guidance.</p>}
       <StartDialog
         open={confirm}
         onOpenChange={setConfirm}
@@ -264,12 +246,15 @@ export function StartButton(props: CompareProps & { className?: string; hint?: b
 export function ComparePanel(props: CompareProps) {
   return (
     <div className="flex min-h-full flex-col gap-4">
-      <TripTitle {...props} />
+      {/* Wrapped: the title grows to fill a header row on mobile, but mustn't grow in this column. */}
+      <div className="flex">
+        <TripTitle {...props} />
+      </div>
       <RouteChips {...props} />
       <RouteDetails {...props} />
       <div className="flex-1" />
       <div className="sticky bottom-0 -mx-1 bg-background/95 px-1 pt-2 pb-1 backdrop-blur">
-        <StartButton {...props} hint />
+        <StartButton {...props} />
       </div>
     </div>
   )
@@ -308,11 +293,12 @@ function Ranking({ routes, summaries, deciding }: { routes: Route[]; summaries: 
     },
   ]
   return (
-    <>
-      <Table className="table-fixed text-xs">
+    <Table className="table-fixed text-xs">
         <TableHeader>
           <TableRow>
-            <TableHead className="h-8 w-[38%]">In order</TableHead>
+            <TableHead className="h-8 w-[38%]">
+              <RankingInfo />
+            </TableHead>
             {routes.map((r) => (
               <TableHead key={r.id} className="h-8 text-right">
                 {r.id}
@@ -321,14 +307,14 @@ function Ranking({ routes, summaries, deciding }: { routes: Route[]; summaries: 
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row, i) => {
+          {rows.map((row) => {
             const best = Math.min(...routes.map(row.value))
             const isDeciding = row.key === deciding
             return (
               <TableRow key={row.key} className={cn(isDeciding && 'bg-primary/10')}>
                 <TableCell className={cn('py-1.5 whitespace-normal', isDeciding ? 'font-semibold text-primary' : 'text-muted-foreground')}>
-                  {i + 1}. {CRITERIA_LABELS[row.key]}
-                  {isDeciding && ' · decides'}
+                  {CRITERIA_LABELS[row.key]}
+                  {isDeciding && <StarIcon className="ml-1 inline size-3 fill-primary align-[-1px]" aria-label="decides" />}
                 </TableCell>
                 {routes.map((r) => (
                   <TableCell key={r.id} className={cn('py-1.5 text-right whitespace-normal tabular-nums', row.value(r) === best ? 'font-semibold' : 'text-muted-foreground')}>
@@ -339,10 +325,21 @@ function Ranking({ routes, summaries, deciding }: { routes: Route[]; summaries: 
             )
           })}
         </TableBody>
-      </Table>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Each checkpoint covers half the gap to its neighbours. Average risk is mile-weighted: Low 0 … No Travel 4. No Travel miles rank first.
-      </p>
-    </>
+    </Table>
+  )
+}
+
+/** The ranking rules, one tap away instead of a footnote. */
+function RankingInfo() {
+  return (
+    <Popover>
+      <PopoverTrigger className="-ml-1 flex items-center gap-1 rounded-md px-1 py-0.5 font-normal text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
+        Ranked by
+        <InfoIcon className="size-3.5" />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64 text-xs text-muted-foreground">
+        Top to bottom; the first row that differs decides (★). Miles are weighted: each checkpoint covers half the gap to its neighbours. Avg risk runs from Low 0 to No Travel 4.
+      </PopoverContent>
+    </Popover>
   )
 }

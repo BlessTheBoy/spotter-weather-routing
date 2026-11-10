@@ -1,4 +1,4 @@
-import { CalendarCheckIcon, LayersIcon, PauseIcon, PlayIcon, Undo2Icon } from 'lucide-react'
+import { LayersIcon, PauseIcon, PlayIcon, Undo2Icon } from 'lucide-react'
 import { useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Interval, Plan } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -7,10 +7,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useForecastHour, usePlaying, type Clock } from '@/lib/clock'
 import { LAYERS, type Layer } from '@/lib/forecast'
 import { formatTime } from '@/lib/format'
-import { departureOutlook, saferDeparture, type SaferDeparture } from '@/lib/plan'
+import { departureOutlook, saferDeparture } from '@/lib/plan'
 import { RISK_LEVELS, riskColor } from '@/lib/risk'
 import { cn } from '@/lib/utils'
 
@@ -89,6 +90,7 @@ export function MiniPlayer({ onExpand, ...props }: PlayerProps & { onExpand: () 
  * - The "Leave" flag above the track is the departure: drag the flag to re-time every route.
  * - The round knob on the track is the forecast clock: drag it (or press Play) to see the map at that hour.
  * - The track is tinted by how safe the selected route would be for each departure hour.
+ * - A green ghost flag under the track marks the first safer departure; tap it to leave then.
  */
 export function TimelineBar(props: Props) {
   const { plan, interval, clock, mapClock, onMapClockChange, departureMs, onDepartureChange, onApplyDeparture, routeId, routeLabel, compact, bare } = props
@@ -102,6 +104,9 @@ export function TimelineBar(props: Props) {
   const safer = saferDeparture(plan, interval, departureMs, routeId)
   const stepW = span ? (HOUR / span) * 100 : 0
   const leaveFrac = span ? (departureMs - start) / span : 0
+  const saferFrac = safer && span ? (safer.at - start) / span : 0
+  // Hangs inwards near either end, like the Leave flag.
+  const hang = (f: number) => (f < 0.08 ? 'translateX(-6px)' : f > 0.92 ? 'translateX(calc(-100% + 6px))' : 'translateX(-50%)')
 
   function timeAt(clientX: number) {
     const r = track.current!.getBoundingClientRect()
@@ -126,7 +131,9 @@ export function TimelineBar(props: Props) {
 
   const tickStep = (compact ? 24 : 12) * HOUR
   const ticks: number[] = []
-  for (let ms = Math.ceil(start / tickStep) * tickStep; ms <= start + span; ms += tickStep) if (Math.abs(ms - now) > span * (compact ? 0.16 : 0.08)) ticks.push(ms)
+  const gap = span * (compact ? 0.16 : 0.08)
+  const clear = (ms: number) => !safer || Math.abs(ms - safer.at) > gap
+  for (let ms = Math.ceil(start / tickStep) * tickStep; ms <= start + span; ms += tickStep) if (Math.abs(ms - now) > gap && clear(ms)) ticks.push(ms)
 
   return (
     <div className={cn('flex flex-col gap-1', !bare && 'rounded-2xl border bg-popover/95 shadow-xl backdrop-blur', !bare && (compact ? 'px-3 pt-2 pb-1' : 'px-4 pt-3 pb-2'))}>
@@ -134,20 +141,19 @@ export function TimelineBar(props: Props) {
         <Button size="icon" className="rounded-full" onClick={play} aria-label={playing ? 'Pause' : 'Play the trip'}>
           {playing ? <PauseIcon /> : <PlayIcon />}
         </Button>
-        <div className="min-w-0 flex-1 text-xs leading-tight">
-          <p className="truncate font-semibold">{mapClock === 'trip' ? 'Weather when you get there' : `Forecast for ${formatTime(playMs)}`}</p>
-          <p className="truncate text-muted-foreground">Leave {formatTime(departureMs)} · drag the flag to change</p>
-        </div>
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold">{mapClock === 'trip' ? 'Weather when you get there' : `Forecast for ${formatTime(playMs)}`}</p>
         {mapClock === 'forecast' && (
-          <Button size="sm" variant="ghost" onClick={() => (clock.pause(), onMapClockChange('trip'))}>
-            <Undo2Icon data-icon="inline-start" />
-            My trip
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="icon" variant="ghost" onClick={() => (clock.pause(), onMapClockChange('trip'))} aria-label="Back to my trip">
+                <Undo2Icon />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Back to my trip</TooltipContent>
+          </Tooltip>
         )}
-        {safer && !compact && <SaferButton safer={safer} departureMs={departureMs} onClick={() => onApplyDeparture(safer.at)} />}
         {!bare && <LayersButton {...props} />}
       </div>
-      {safer && compact && <SaferButton safer={safer} departureMs={departureMs} onClick={() => onApplyDeparture(safer.at)} className="self-start" />}
 
       {/* Track: tap or drag anywhere to move the forecast knob. The flag above it is the departure. */}
       <div className="relative mt-6 mb-1 touch-none select-none">
@@ -205,8 +211,24 @@ export function TimelineBar(props: Props) {
         </div>
       </div>
 
-      <div className="relative h-4 text-[10px] text-muted-foreground">
-        {now >= start && (
+      <div className="relative h-5 text-[10px] text-muted-foreground">
+        {safer && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => onApplyDeparture(safer.at)}
+                aria-label={`Leave ${formatTime(safer.at)} instead: no Severe or No Travel`}
+                className="absolute -top-1 z-10 rounded-md border border-dashed border-risk-low bg-popover px-1.5 py-px font-bold whitespace-nowrap text-risk-low outline-none before:absolute before:bottom-full before:left-[var(--stem)] before:h-1.5 before:w-px before:bg-risk-low after:absolute after:-inset-2 hover:bg-risk-low/15 focus-visible:ring-3 focus-visible:ring-ring/60"
+                style={{ left: pct(safer.at), transform: hang(saferFrac), ['--stem' as string]: saferFrac < 0.08 ? '6px' : saferFrac > 0.92 ? 'calc(100% - 6px)' : '50%' }}
+              >
+                +{Math.round((safer.at - departureMs) / HOUR)} h ✓
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Leave {formatTime(safer.at)}: no Severe or No Travel</TooltipContent>
+          </Tooltip>
+        )}
+        {now >= start && clear(now) && (
           <span className="absolute -translate-x-1/2 font-semibold text-foreground" style={{ left: pct(now) }}>
             Now
           </span>
@@ -218,16 +240,6 @@ export function TimelineBar(props: Props) {
         ))}
       </div>
     </div>
-  )
-}
-
-function SaferButton({ safer, departureMs, onClick, className }: { safer: SaferDeparture; departureMs: number; onClick: () => void; className?: string }) {
-  const waitH = Math.round((safer.at - departureMs) / HOUR)
-  return (
-    <Button size="sm" variant="outline" onClick={onClick} className={className} title={`Leaving then avoids ${Math.round(safer.badNow)} mi of Severe or No Travel`}>
-      <CalendarCheckIcon data-icon="inline-start" className="text-risk-low" />
-      Leave {formatTime(safer.at)}: no Severe (+{waitH} h)
-    </Button>
   )
 }
 
@@ -254,7 +266,8 @@ export function LayersButton({ layer, onLayerChange, showHeatmap, onShowHeatmapC
           <Label htmlFor="heat">Weather on the map</Label>
           <Switch id="heat" checked={showHeatmap} onCheckedChange={onShowHeatmapChange} />
         </div>
-        <ToggleGroup type="single" variant="outline" size="sm" value={layer} onValueChange={(v) => v && onLayerChange(v as Layer)} disabled={!showHeatmap} className="w-full">
+        {/* Picking a layer also turns it on. */}
+        <ToggleGroup type="single" variant="outline" size="sm" value={showHeatmap ? layer : ''} onValueChange={(v) => v && (onLayerChange(v as Layer), onShowHeatmapChange(true))} className="w-full">
           {(Object.keys(LAYERS) as Layer[]).map((k) => (
             <ToggleGroupItem key={k} value={k} className="flex-1 text-xs">
               {LAYERS[k].label}

@@ -2,7 +2,6 @@ import { ArrowUpIcon, ArrowUpLeftIcon, ArrowUpRightIcon, CheckCircle2Icon, Corne
 import { useEffect, useState } from 'react'
 import type { Instruction, Route } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { formatDuration, formatTime } from '@/lib/format'
 import { INTRO_MS, SPEEDS, type NavState } from '@/lib/navigation'
 import type { CheckpointState } from '@/lib/plan'
@@ -33,6 +32,10 @@ export function shortRoad(text: string): string {
     .replace(/US Highway /gi, 'US-')
     .replace(/State Highway /gi, 'SR-')
     .replace(/\s+/g, ' ')
+    // One road can carry several shields ("US-21 N/I-77 N/US-21 N"): list each once, Interstate first.
+    .replace(/[A-Z]{1,3}-\d+[A-Z]?(?: [NSEW])?(?:\/[A-Z]{1,3}-\d+[A-Z]?(?: [NSEW])?)+/g, (run) =>
+      [...new Set(run.split('/'))].sort((a, b) => Number(!a.startsWith('I-')) - Number(!b.startsWith('I-'))).join(' / '),
+    )
     .trim()
 }
 
@@ -69,6 +72,7 @@ export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange
     (['wind', 'rain', 'snow'] as const).filter((k) => (k === 'wind' ? Math.max(h.windLevel, h.loadLevel) : k === 'rain' ? h.rainLevel : h.snowLevel) === h.level).join(' and ')
   const { top, bottom } = navPadding(window.innerHeight)
   const offRoute = nav.offRouteMi != null
+  const sim = nav.source === 'simulated'
   // The puck appears once the camera has flown in and sits on the truck.
   const [landed, setLanded] = useState(false)
   useEffect(() => {
@@ -134,34 +138,38 @@ export function NavigateOverlay({ route, nav, states, departureMs, onSpeedChange
       <div className="absolute right-3 bottom-4 left-3 z-20 mx-auto flex max-w-xl flex-col gap-2">
         {road && !offRoute && <p className="mx-auto w-fit rounded-full bg-popover/95 px-3 py-1 text-sm font-semibold shadow">{shortRoad(road)}</p>}
         <div className="flex flex-col gap-2 rounded-2xl border bg-popover/95 px-4 py-3 shadow-2xl backdrop-blur">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
               <p className="text-2xl leading-tight font-bold text-primary">{formatDuration(remainingS)}</p>
               <p className="truncate text-sm text-muted-foreground">
-                {distance(Math.max(0, route.distance_mi - nav.mile))} · ETA {formatTime(clockMs + remainingS * 1000)}
+                {sim && (
+                  <span className="font-semibold text-risk-moderate" title={nav.reason ?? 'Simulated drive'}>
+                    Sim ·{' '}
+                  </span>
+                )}
+                ETA {formatTime(clockMs + remainingS * 1000)} · {distance(Math.max(0, route.distance_mi - nav.mile))}
               </p>
             </div>
+            {sim && (
+              <>
+                <Button size="icon" variant="secondary" className="size-11 shrink-0" onClick={onTogglePlaying} aria-label={nav.playing ? 'Pause drive' : 'Resume drive'}>
+                  {nav.playing ? <PauseIcon /> : <PlayIcon />}
+                </Button>
+                {/* One button steps through the speeds. */}
+                <Button
+                  variant="secondary"
+                  className="h-11 min-w-14 shrink-0 tabular-nums"
+                  onClick={() => onSpeedChange(SPEEDS[(SPEEDS.indexOf(nav.speed as (typeof SPEEDS)[number]) + 1) % SPEEDS.length])}
+                  aria-label={`Simulation speed ${nav.speed}×, change`}
+                >
+                  {nav.speed}×
+                </Button>
+              </>
+            )}
             <Button variant="destructive" className="h-11 px-5" onClick={onEnd}>
               End
             </Button>
           </div>
-          {nav.source === 'simulated' && (
-            <div className="flex items-center gap-2">
-              <span className="rounded-md bg-risk-moderate/15 px-2 py-1 text-[11px] font-bold tracking-wide text-risk-moderate" title={nav.reason ?? undefined}>
-                SIMULATED
-              </span>
-              <Button size="icon" variant="secondary" className="size-10 shrink-0" onClick={onTogglePlaying} aria-label={nav.playing ? 'Pause drive' : 'Resume drive'}>
-                {nav.playing ? <PauseIcon /> : <PlayIcon />}
-              </Button>
-              <ToggleGroup type="single" variant="outline" className="ml-auto" value={String(nav.speed)} onValueChange={(v) => v && onSpeedChange(Number(v))} aria-label="Simulation speed">
-                {SPEEDS.map((s) => (
-                  <ToggleGroupItem key={s} value={String(s)} className="h-10 min-w-10 px-1.5 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground">
-                    {s}×
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </div>
-          )}
         </div>
       </div>
     </>

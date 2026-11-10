@@ -57,7 +57,8 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
   const [departureMs, setDepartureMs] = useState(0)
   const [hovered, setHovered] = useState<number | null>(null)
   const [layer, setLayer] = useState<Layer>('risk')
-  const [showHeatmap, setShowHeatmap] = useState(true)
+  // The route line already carries the risk; the area-wide layer is one tap away in Layers.
+  const [showHeatmap, setShowHeatmap] = useState(false)
   const [is3D, setIs3D] = useState(false)
   // Mobile: the top deck folds away while the user explores the map; details open in a sheet.
   const [deckOpen, setDeckOpen] = useState(true)
@@ -195,25 +196,20 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
   )
   const comparing = mode === 'compare' && compareProps
 
-  const badge = (
-    <span
-      className={
-        demo
-          ? 'shrink-0 rounded-full bg-risk-moderate/15 px-2 py-0.5 text-[10px] font-bold text-risk-moderate'
-          : 'shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary'
-      }
-      title="Refresh the page to switch"
-    >
-      {demo ? 'DEMO' : 'LIVE'}
+  // One marker for the data source: the demo pill doubles as the weather-scenario menu.
+  const badge = demo ? (
+    <Suspense>
+      <ScenarioSwitcher onChange={() => plan && submit()} />
+    </Suspense>
+  ) : (
+    <span className="shrink-0 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary" title="Refresh the page to switch">
+      LIVE
     </span>
   )
   const header = (
     <div className="mb-4 flex items-center gap-2.5">
       <img src="/favicon.svg" alt="" className="size-7" />
-      <div>
-        <h1 className="text-base leading-tight font-semibold">Weather-Aware Truck Routing</h1>
-        <p className="text-xs text-muted-foreground">Forecast at your ETA, ranked by risk</p>
-      </div>
+      <h1 className="min-w-0 text-base leading-tight font-semibold">Weather-Aware Truck Routing</h1>
       <span className="ml-auto">{badge}</span>
     </div>
   )
@@ -247,11 +243,6 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
         onPlay={onPlay}
       />
     ) : null
-  const scenario = demo && (
-    <Suspense>
-      <ScenarioSwitcher onChange={() => plan && submit()} />
-    </Suspense>
-  )
 
   // Keep the routes inside the part of the map not covered by the panel, deck or floating buttons.
   const mapPadding = desktop
@@ -298,8 +289,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
         {desktop && mode !== 'navigate' && (
           <div className="absolute top-3 left-3 z-20 flex flex-col items-start gap-2">
             {timeline && <div className="w-[min(880px,calc(100vw-400px-5rem))]">{timeline}</div>}
-            <div className="flex gap-2">
-              {comparing && (
+            {comparing && (
                 <ToggleGroup
                   type="single"
                   size="sm"
@@ -316,9 +306,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
                     3D terrain
                   </ToggleGroupItem>
                 </ToggleGroup>
-              )}
-              {scenario}
-            </div>
+            )}
           </div>
         )}
 
@@ -342,7 +330,6 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
             }
           >
             {planPanel}
-            {scenario && <div className="self-start">{scenario}</div>}
           </TopDeck>
         )}
 
@@ -354,7 +341,10 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
               onHeightChange={setDeckH}
               header={
                 deckOpen ? (
-                  <TripTitle {...compareProps} />
+                  <>
+                    <TripTitle {...compareProps} />
+                    {demo && badge}
+                  </>
                 ) : mapClock === 'forecast' ? (
                   <MiniPlayer
                     plan={plan!}
@@ -393,7 +383,6 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
                 </Button>
               </div>
               {timeline}
-              {scenario && <div className="self-start">{scenario}</div>}
             </TopDeck>
 
             <div className="absolute right-3 bottom-[calc(max(1rem,env(safe-area-inset-bottom))+4rem)] z-20 flex flex-col gap-2">
@@ -417,9 +406,7 @@ export default function App({ demo, onUseDemo }: { demo: boolean; onUseDemo: () 
               <DrawerContent className="max-h-[85dvh]">
                 <DrawerHeader className="pb-2 group-data-[vaul-drawer-direction=bottom]/drawer-content:text-left">
                   <DrawerTitle>{routeName(route)}</DrawerTitle>
-                  <DrawerDescription>
-                    {formatDuration(route.duration_s)} · leave {formatTime(departureMs)}
-                  </DrawerDescription>
+                  <DrawerDescription>{formatDuration(route.duration_s)}</DrawerDescription>
                 </DrawerHeader>
                 <div className="overflow-y-auto px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
                   <RouteDetails {...compareProps} rankOpen />

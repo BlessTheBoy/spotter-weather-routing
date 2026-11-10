@@ -58,7 +58,8 @@ export function badgeFeatures(states: CheckpointState[]): FeatureCollection<Poin
   const features: Feature<Point>[] = []
   for (const s of states) {
     const b = badgeOf(s)
-    if (b) features.push({ type: 'Feature', properties: { image: `badge:${b.level}:${b.elements}`, rank: 4 - b.level, index: s.index }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } })
+    // High is already plain from the line colour; badges are kept for what needs action.
+    if (b && b.level >= 3) features.push({ type: 'Feature', properties: { image: `badge:${b.level}:${b.elements}`, rank: 4 - b.level, index: s.index }, geometry: { type: 'Point', coordinates: [s.lng, s.lat] } })
   }
   return { type: 'FeatureCollection', features }
 }

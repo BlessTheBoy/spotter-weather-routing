@@ -3,7 +3,17 @@ import type { Interval, Plan, Route } from '@/api/types'
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { formatMiles, formatTime } from '@/lib/format'
-import { optionAt, routeStates, saferDeparture, severeAndWorse } from '@/lib/plan'
+import { optionAt, routeStates, saferDeparture, severeAndWorse, type CheckpointState } from '@/lib/plan'
+import { RISK_LEVELS } from '@/lib/risk'
+
+/** Only the readings that pushed this checkpoint up (High or worse), never the zeros. */
+function firedElements(s: CheckpointState): string[] {
+  const out: string[] = []
+  if (Math.max(s.windLevel, s.loadLevel) >= 2) out.push(`wind ${Math.round(s.wind)} mph${s.loadLevel > s.windLevel ? ' with this load' : ''}`)
+  if (s.rainLevel >= 2) out.push(`rain ${s.rain.toFixed(2)} in/hr`)
+  if (s.snowLevel >= 2) out.push(`snow ${s.snow.toFixed(2)} in/hr`)
+  return out
+}
 
 interface Props {
   open: boolean
@@ -41,24 +51,21 @@ export function StartDialog({ open, onOpenChange, plan, interval, route, departu
         <AlertDialogHeader>
           <AlertDialogTitle className="flex items-center gap-2">
             <Icon className={noTravel ? 'text-risk-no-travel' : 'text-risk-severe'} />
-            {route.label} has {noTravel ? 'No Travel' : 'Severe'} weather
+            {route.label}: {noTravel ? `${formatMiles(summary.miles_by_level.no_travel)} No Travel` : `${formatMiles(summary.miles_by_level.severe)} Severe`}
           </AlertDialogTitle>
-          <AlertDialogDescription>
-            {noTravel ? `${formatMiles(summary.miles_by_level.no_travel)} No Travel` : `${formatMiles(summary.miles_by_level.severe)} Severe`} on this trip
-            {first ? `, from about mile ${Math.round(first.mile)} around ${formatTime(first.eta)} (wind ${Math.round(first.wind)} mph, rain ${first.rain.toFixed(2)} in/hr, snow ${first.snow.toFixed(2)} in/hr)` : ''}.
-          </AlertDialogDescription>
+          <AlertDialogDescription>{first ? [`From mile ${Math.round(first.mile)}`, formatTime(first.eta), ...firedElements(first)].join(' · ') : RISK_LEVELS[noTravel ? 4 : 3].verdict}</AlertDialogDescription>
         </AlertDialogHeader>
         <div className="flex flex-col gap-2">
           {later && (
             <Button onClick={() => onLeaveLater(later.at)} className="h-auto flex-col items-start gap-0 py-2 text-left">
               <span>Leave at {formatTime(later.at)} instead</span>
-              <span className="text-xs font-normal opacity-80">No Severe or No Travel on {plan.routes.find((r) => r.id === later.routeId)?.label}</span>
+              <span className="text-xs font-normal opacity-80">✓ Clear of Severe</span>
             </Button>
           )}
           {better && (
             <Button variant="secondary" onClick={() => onSwitchRoute(better.route.id)} className="h-auto flex-col items-start gap-0 py-2 text-left">
               <span>Switch to {better.route.label}</span>
-              <span className="text-xs font-normal text-muted-foreground">{better.bad > 0 ? `Still ${formatMiles(better.bad)} Severe or worse` : 'No Severe or No Travel'}</span>
+              <span className="text-xs font-normal text-muted-foreground">{better.bad > 0 ? `Still ${formatMiles(better.bad)} Severe or worse` : '✓ Clear of Severe'}</span>
             </Button>
           )}
           <Button variant="outline" onClick={() => onOpenChange(false)}>

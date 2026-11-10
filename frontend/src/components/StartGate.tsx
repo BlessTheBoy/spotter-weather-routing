@@ -1,4 +1,4 @@
-import { FlaskConicalIcon, NavigationIcon, RadioTowerIcon } from 'lucide-react'
+import { FlaskConicalIcon, RadioTowerIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -35,11 +35,7 @@ export function StartGate({ pending, onChoose }: Props) {
             icon={<FlaskConicalIcon className="text-risk-moderate" />}
             title="Explore with demo data"
             tag="Recommended"
-            points={[
-              'See every risk level, badge and the load rules, using rain, wind, snow and No Travel scenarios.',
-              'Try Start and Navigate as a simulated drive. No need to be in a truck.',
-              'Instant, with no waiting on live weather that may be calm today.',
-            ]}
+            line="Every risk level and a simulated drive. Instant."
             action="Start demo"
             primary
             busy={pending === 'demo'}
@@ -49,7 +45,7 @@ export function StartGate({ pending, onChoose }: Props) {
           <Choice
             icon={<RadioTowerIcon className="text-primary" />}
             title="Use live data"
-            points={['Real truck routes from TomTom for any US or Canada trip.', 'Real hourly forecasts from Open-Meteo for the next 7 days.', 'Navigate uses your phone’s GPS and compass when you’re at the start.']}
+            line="Real TomTom truck routes and live forecasts. US and Canada."
             action="Start live"
             busy={pending === 'live'}
             disabled={pending !== null}
@@ -57,17 +53,14 @@ export function StartGate({ pending, onChoose }: Props) {
           />
         </div>
 
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <NavigationIcon className="size-3.5" />
-          Demo replays two recorded trips (Charlotte → New York and Denver → Salt Lake City). Refresh the page any time to switch.
-        </p>
+        <p className="text-xs text-muted-foreground">Refresh the page any time to switch.</p>
       </div>
     </div>
   )
 }
 
-function Choice(props: { icon: ReactNode; title: string; tag?: string; points: string[]; action: string; primary?: boolean; busy: boolean; disabled: boolean; onClick: () => void }) {
-  const { icon, title, tag, points, action, primary, busy, disabled, onClick } = props
+function Choice(props: { icon: ReactNode; title: string; tag?: string; line: string; action: string; primary?: boolean; busy: boolean; disabled: boolean; onClick: () => void }) {
+  const { icon, title, tag, line, action, primary, busy, disabled, onClick } = props
   return (
     <div className={cn('flex flex-col gap-3 rounded-2xl border p-4', primary ? 'border-primary/50 bg-primary/5' : 'bg-card')}>
       <div className="flex items-center gap-2">
@@ -75,14 +68,7 @@ function Choice(props: { icon: ReactNode; title: string; tag?: string; points: s
         <p className="font-semibold">{title}</p>
         {tag && <span className="ml-auto rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">{tag}</span>}
       </div>
-      <ul className="flex flex-1 flex-col gap-1.5 text-sm text-muted-foreground">
-        {points.map((p) => (
-          <li key={p} className="flex gap-2">
-            <span className="mt-2 size-1 shrink-0 rounded-full bg-muted-foreground" />
-            {p}
-          </li>
-        ))}
-      </ul>
+      <p className="flex-1 text-sm text-muted-foreground">{line}</p>
       <Button size="lg" className="h-11" variant={primary ? 'default' : 'outline'} disabled={disabled} onClick={onClick} autoFocus={primary}>
         {busy && <Spinner data-icon="inline-start" />}
         {busy ? 'Getting the map ready…' : action}

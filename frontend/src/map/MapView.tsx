@@ -358,7 +358,7 @@ export function MapView(props: Props) {
     const roomBelow = map.getContainer().clientHeight - bottom - y
     const popup = new Popup({ closeButton: false, closeOnClick: false, className: 'cp-popup', offset: 16, maxWidth: '260px', anchor: roomAbove >= roomBelow ? 'bottom' : 'top' })
       .setLngLat([s.lng, s.lat])
-      .setHTML(checkpointPopupHtml(route, s, plan.load_lb))
+      .setHTML(checkpointPopupHtml(s, plan.load_lb))
       .addTo(map)
     return () => {
       map.setFeatureState({ source: 'checkpoints', id: hoveredCheckpoint }, { hover: false })
@@ -396,7 +396,7 @@ function addLayers(map: MapLibre) {
   map.addLayer({ id: 'route-hit', type: 'line', source: 'routes', paint: { 'line-color': '#000', 'line-opacity': 0, 'line-width': 20 } })
   map.addLayer({ id: 'segments-casing', type: 'line', source: 'segments', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': '#0b1a22', 'line-width': 10 } })
   map.addLayer({ id: 'segments', type: 'line', source: 'segments', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': RISK_LINE_COLOR, 'line-width': 6 } })
-  // Low-risk dots only appear once zoomed in, so long trips don't turn into a solid chain.
+  // The line carries the risk at trip scale; the checkpoint dots appear once zoomed in (Low ones a little later).
   const dotPaint = {
       'circle-color': RISK_LINE_COLOR,
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, ['case', ['boolean', ['feature-state', 'hover'], false], 8, 3.5], 9, ['case', ['boolean', ['feature-state', 'hover'], false], 11, 6]],
@@ -404,7 +404,7 @@ function addLayers(map: MapLibre) {
       'circle-stroke-width': ['case', ['boolean', ['feature-state', 'hover'], false], 2.5, 1.5],
   } as const
   map.addLayer({ id: 'checkpoints-low', type: 'circle', source: 'checkpoints', minzoom: 7.5, filter: ['==', ['get', 'level'], 0], paint: dotPaint as never })
-  map.addLayer({ id: 'checkpoints', type: 'circle', source: 'checkpoints', filter: ['!=', ['get', 'level'], 0], paint: dotPaint as never })
+  map.addLayer({ id: 'checkpoints', type: 'circle', source: 'checkpoints', minzoom: 6.5, filter: ['!=', ['get', 'level'], 0], paint: dotPaint as never })
   // Invisible, finger-sized targets over the dots (which can be 3–6 px when zoomed out).
   map.addLayer({ id: 'checkpoints-hit', type: 'circle', source: 'checkpoints', paint: { 'circle-radius': 14, 'circle-opacity': 0 } })
   map.addLayer({
