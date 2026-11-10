@@ -60,7 +60,7 @@ Plan form ──POST /api/plan──────────────▶ vali
                                            risk: vectorised bands → levels per hour
                                            schedule: ranking for every departure hour × interval
                                            corridor: H3 cells × 49 hours
-Compare / timeline / map ◀──one JSON (≈165 KB gzipped)──┘
+Compare / timeline / map ◀──one JSON (≈200 KB gzipped)──┘
 (no more requests while you drag, switch intervals, play or navigate)
 ```
 
