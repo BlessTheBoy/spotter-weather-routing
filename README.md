@@ -24,15 +24,15 @@ Refresh the page to switch.
 | 3 route options from a routing API | TomTom truck routing (`travelMode=truck`, `vehicleWeight`, `departAt`, alternatives). Forced via-point alternates if TomTom returns fewer than 3. OSRM as a keyless fallback. |
 | Weather every 10 / 25 / 50 mi at the truck's ETA | Checkpoints for all three intervals are computed server-side. The 10/25/50 switch is instant. Each checkpoint carries its hourly forecast, read at departure + travel time to that point. |
 | Risk from the wind/rain/snow and load rules | `backend/planner/domain/risk.py`, with the scalar and vectorised versions tested against each other on every band edge. |
-| Recommend: fewest Severe miles → fewest High miles → lowest average risk → shortest time | `backend/planner/domain/recommend.py`. The UI says which criterion decided it and what it cost in time. |
-| Routes, checkpoints, risk, ETAs and summaries on a map | The selected route is coloured by risk at ETA, with alternatives in grey. Checkpoint dots and weather badges open a popup (wind, gust, rain, snow, per-input level, load-rule note, ETA). A risk strip shows the route by distance with ETA ticks. A ranking table backs the recommendation. |
+| Recommend: fewest Severe miles → fewest High miles → lowest average risk → shortest time | `backend/planner/domain/recommend.py`. Each route gets a one-line verdict per risk level (Low "Safe to run" … No Travel "Do not dispatch"). "Why this route" names the deciding criterion and shows the full ranking table. |
+| Routes, checkpoints, risk, ETAs and summaries on a map | The selected route is coloured by risk at ETA, with alternatives in grey. Checkpoint dots (once zoomed in) and Severe/No Travel weather badges open a popup: level and verdict, the readings that set it, the load-rule note and ETA. A risk strip shows the route by distance; hover any stretch for its checkpoint. A ranking table backs the recommendation. |
 | Weather heatmap along the corridor with a 0–48 h slider | An H3 hex corridor around all routes, Risk/Wind/Rain/Snow layers, and a 48 h track with Play. |
 
 Beyond the brief, kept small and in service of it:
-- **Departure pin on the timeline.** Drag it and every route, checkpoint and the recommendation re-time instantly. Every departure hour is precomputed, so dragging never waits on the network. The track is tinted by how safe each departure would be, and it suggests a safer time to leave when there is one.
+- **Departure pin on the timeline.** Drag it and every route, checkpoint and the recommendation re-time instantly. Every departure hour is precomputed, so dragging never waits on the network. The track is tinted by how safe the selected route would be for each departure, and a green flag marks the first safer departure (one tap applies it, with Undo).
 - **Start rules.** "Start now" only when leaving now. Otherwise you get "Preview drive", a labelled simulation at the planned time. A route with No Travel miles asks first and offers a safer route or a later departure.
 - **Navigate.** A Google Maps-style driving view: close heading-up camera, next turn, weather-ahead warnings, and the map turning with the phone's compass on a real drive.
-- **Optional 3D view:** terrain plus risk columns.
+- **Optional 3D view:** terrain with hillshade.
 
 ## Risk logic and the assumptions behind it
 
@@ -41,7 +41,7 @@ The brief's tables leave some edges open. These are the readings I chose, each c
 - **Band edges are half-open `[lower, upper)`.** Rain 0.25 in/hr is High, not Moderate. Wind 34.9 mph is Moderate. The brief's top edges stay exactly as written: wind ≥ 55 mph is No Travel, but rain of exactly 1.00 in/hr and snow of exactly 3.0 in/hr are still Severe, because No Travel is "> 1.00" and "> 3.0".
 - **Inputs.** Wind is sustained 10 m wind; gusts are shown but don't classify, since the brief says "wind". Rain is `rain + showers` (in/hr). Snow is new `snowfall` (in/hr, not depth).
 - **Checkpoint level** is the worst of wind, rain, snow and the load rules. The load rules only ever raise the level.
-- **Risk miles.** Each checkpoint stands for half the gap to each neighbour, so a route's miles add up to its length. Coarser intervals sample less of the route, so totals can shift between 10, 25 and 50 mi. The UI labels them ("measured every 10 mi"), and 10 mi is the default.
+- **Risk miles.** Each checkpoint stands for half the gap to each neighbour, so a route's miles add up to its length. Coarser intervals sample less of the route, so totals can shift between 10, 25 and 50 mi. 10 mi is the default, chosen in Plan and fixed while comparing so totals never shift underfoot.
 - **Ranking adds No Travel miles first.** The brief doesn't mention No Travel, but a route through No Travel can't be "safer" than one without. After that it follows the brief: Severe miles, High miles, mile-weighted average risk (Low 0 … No Travel 4), travel time. Values are rounded before comparing (0.1 mi, 0.01, 1 minute) so float noise can't decide a tie.
 - **Load rule direction.** As written, heavier loads in high wind rate worse. In practice light or empty trailers are the ones that blow over. I kept the brief's rule and note it under "What I'd do next".
 - **ETA** is TomTom's traffic-aware truck travel time for the entered departure. When the departure pin moves, weather exposure is re-timed using that same driving time, and Start re-plans for the exact moment.
@@ -79,7 +79,7 @@ Compare / timeline / map ◀──one JSON (≈165 KB gzipped)──┘
 ## Performance
 
 - **One request per plan.** Every departure hour × interval × route is precomputed server-side, so dragging the pin, switching interval, playing the forecast or navigating never waits on the network.
-- **The heatmap doesn't re-upload data when the hour changes.** Hex colours are driven by MapLibre `feature-state` from typed arrays. Wind, rain and snow blend between hours while scrubbing. The 3D columns' source only changes when a cell crosses a threshold.
+- **The heatmap doesn't re-upload data when the hour changes.** Hex colours are driven by MapLibre `feature-state` from typed arrays. Wind, rain and snow blend between hours while scrubbing.
 - **The driving camera** updates every animation frame (position exact, heading eased). React state updates only a few times a second.
 - **The app bundle preloads behind the start screen.** Vendor code is split (map engine, UI kit) and demo data is lazy-loaded.
 
@@ -94,7 +94,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
 cp .env.example .env          # add TOMTOM_API_KEY (free at developer.tomtom.com); without it routing falls back to OSRM
 python manage.py runserver 8000
-pytest -q                     # 108 tests
+pytest -q                     # 111 tests
 
 # Frontend (second terminal)
 cd frontend
